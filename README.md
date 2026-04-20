@@ -3,7 +3,7 @@ Notre projet est un Éditeur de texte intelligent, Le but est d'aider les étudi
 
 # Fonctionnalités
 
-- Parser un fichier JSON**(avec cJSON)** contenat les normes de redactions
+- Parser un fichier JSON`(avec cJSON)` contenat les normes de redactions
 
 # Structure du projet
 
