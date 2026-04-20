@@ -27,3 +27,7 @@ IntelliEditor/
 ├── models/                   # Modèles GGUF (ex: Mistral 7B) [cite: 294]
 └── CMakeLists.txt            # Configuration du build
 ```
+
+# Installation des Outils necessaire
+
+-  cJSON : `sudo apt install libcjson-dev` ou `sudo dnf install cjson cjson-devel`
