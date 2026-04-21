@@ -34,4 +34,5 @@ IntelliEditor/
 
 # Installation des Outils necessaire
 
--  cJSON : `sudo apt install libcjson-dev` ou `sudo dnf install cjson cjson-devel`
+-  cJSON : sur debian `sudo apt install libcjson-dev` ou sur fedora`sudo dnf install cjson cjson-devel`
+-  PCRE2 : sur debian `sudo apt install libpcre2-dev` ou sur fedora ` `
