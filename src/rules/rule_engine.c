@@ -2,6 +2,7 @@
 #include <string.h>
 #include <ctype.h>
 #include "../../include/rules.h"
+#include "checkers/regex_checker.c"
 
 // Vérificateur simple : cherche si une ligne contient le titre de la section
 RuleStatus check_section_exists(const char* document_text, const char* section_name) {
@@ -28,7 +29,10 @@ void run_rule_engine(RuleReport* report, const char* current_text) {
         if (strcmp(r->check_type, "section_exists") == 0) {
             // On utilise la description ou un paramètre pour le nom de la section
             // Ici, pour l'exemple, on cherche le mot-clé stocké
-            r->status = check_section_exists(current_text, "Introduction");
+            r->status = check_section_exists(current_text, r->parameter);
+        }else if (strcmp(r->check_type, "regex_forbidden") == 0) {
+            // Le paramètre contient la liste des mots interdits sous forme de regex
+            r->status = check_regex_forbiden(current_text, (char*)r->parameter);
         }
     }
 }
