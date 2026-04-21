@@ -71,3 +71,17 @@ void run_full_diagnostic(RuleReport* report, const char* text) {
     
     update_report_score(report);
 }
+
+void print_compliance_report(RuleReport* report) {
+    printf("\n=== RAPPORT DE CONFORMITÉ ACADÉMIQUE ===\n");
+    printf("Score : %d/%d\n", report->rules_ok, report->rule_count);
+    
+    for (int i = 0; i < report->rule_count; i++) {
+        if (report->rules[i].status != STATUS_CONFORME) {
+            printf("- [%s] ATTENTION : %s\n", 
+                   (report->rules[i].severity == SEVERITY_ERROR) ? "ERREUR" : "AVERTISSEMENT",
+                   report->rules[i].description);
+        }
+    }
+    printf("========================================\n");
+}

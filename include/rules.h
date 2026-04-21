@@ -39,6 +39,9 @@ typedef struct {
 // Prototype de la fonction de chargement des règles depuis un fichier JSON
 RuleReport* load_rules(const char* filename);
 
+// Prototype de la fonction d'affichage du rapport de conformité
+void print_compliance_report(RuleReport* report);
+
 // Prototypes des vérificateurs (Checkers)
 RuleStatus check_section_exists(const char* document_text, const char* section_name);
 RuleStatus check_regex_forbidden(const char* document_text, const char* pattern);
