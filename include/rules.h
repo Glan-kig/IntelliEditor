@@ -36,4 +36,19 @@ typedef struct {
     int rules_ok;              // Nombre de règles respectées [cite: 130]
 } RuleReport;
 
+// Prototype de la fonction de chargement des règles depuis un fichier JSON
+RuleReport* load_rules(const char* filename);
+
+// Prototype de la fonction d'affichage du rapport de conformité
+void print_compliance_report(RuleReport* report);
+
+// Prototypes des vérificateurs (Checkers)
+RuleStatus check_section_exists(const char* document_text, const char* section_name);
+RuleStatus check_regex_forbidden(const char* document_text, const char* pattern);
+
+// Prototypes du moteur
+void update_report_score(RuleReport* report);
+void run_full_diagnostic(RuleReport* report, const char* text);
+void run_rule_engine(RuleReport* report, const char* current_text);
+
 #endif
