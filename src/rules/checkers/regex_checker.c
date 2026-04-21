@@ -5,7 +5,7 @@
 #include "../../../include/rules.h"
 
 // Verifie si un motif interdit est present dans le texte
-RuleStatus check_regex_forbiden(const char *document_text, const char *pattern){
+RuleStatus check_regex_forbidden(const char *document_text, const char *pattern){
     pcre2_code *re;
     int errornumber;
     PCRE2_SIZE erroroffset;
