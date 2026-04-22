@@ -1,5 +1,7 @@
 # Nom de l'exécutable final
 TARGET = intelli_engine
+# Variables pour cmocka
+TEST_TARGET_CMOCKA = cmocka_tests
 
 # Compilateur
 CC = gcc
@@ -20,6 +22,11 @@ SRC = src/rules/rules.c \
       src/rules/checkers/regex_checker.c \
       src/rules/test_main.c
 
+# Liste de tes fichiers sources pour les tests (TESTS)
+TEST_SRC_CMOCKA = tests/test_rules_cmocka.c \
+                  src/rules/rule_engine.c \
+                  src/rules/checkers/regex_checker.c
+
 # Transformation de la liste .c en .o (fichiers objets)
 OBJ = $(SRC:.c=.o)
 
@@ -33,6 +40,11 @@ $(TARGET): $(OBJ)
 # Compilation des fichiers .c en .o
 %.o: %.c
 	$(CC) $(CFLAGS) -c $< -o $@
+
+# Règle pour les tests avec cmocka
+cmocka:
+	$(CC) $(CFLAGS) $(TEST_SRC_CMOCKA) -o $(TEST_TARGET_CMOCKA) $(LDFLAGS) -lcmocka
+	./$(TEST_TARGET_CMOCKA)
 
 # Nettoyage des fichiers temporaires
 clean:
