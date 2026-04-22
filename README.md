@@ -1,12 +1,30 @@
-# IntelliEditor
-Notre projet est un Éditeur de texte intelligent, Le but est d'aider les étudiants  a réaliser leur travail de fin de cycle sans trop se prendre la tete sur la norme, car l'IA intégrer va  s'assurer de faire respecter la norme Ecriture selon  celle qui sera imposer
+# IntelliEditor - Traitement de Texte Intelligent (Version Linux)
 
-# Fonctionnalités
+**Projet C Avancé - L3 GL / UDBL (2025-2026)**
 
-- Parser un fichier JSON`(avec cJSON)` contenat les normes de redactions
-- Verification d'expressions reguliere `(avec PCRE2)` pour detecter automatiquement l'usage de la premiere personne("je", "mon", "ma", etc.).
+## 1. Présentation
 
-# Structure du projet
+IntelliEditor est un éditeur de texte performant écrit en C, conçu pour aider les étudiants dans la rédaction de documents académiques. Il intègre une analyse en temps réel de la conformité du document via un moteur de règles et une assistance par IA (LLM).
+
+## 2. Équipe (Responsabilités)
+
+- **Kalunga Kalwa Eddy** : DEV-A - Infrastructure & Éditeur (Gap Buffer).
+- **Caleb** : DEV-B - Interface Utilisateur (GTK 3).
+- **Imelda** : DEV-C - LLM & Moteur NLP (llama.cpp).
+- **Glan Ilunga Kayembe** : DEV-D - Moteur de règles & Intégration générale.
+
+## 3. Stack Technique (Linux)
+
+- **Langage :** C11
+- **Interface :** GTK 3
+- **Regex :** PCRE2
+- **Parser JSON :** cJSON
+- **IA :** llama.cpp (Modèles GGUF)
+
+## 4. Compilation et Installation
+Le projet utilise un `Makefile` pour automatiser la gestion des dépendances sur Linux.
+
+## 5. Structure du projet
 
 ```Arboressence
 IntelliEditor/
@@ -23,19 +41,30 @@ IntelliEditor/
 │   │   └── llm_interface.c             # Liaison avec llama.cpp
 │   ├── rules/                          # [DEV-D] Moteur de règles
 │   │   ├── rule_engine.c               # Logique de vérification
+|   |   ├── rules.c                     # Lecture des fichiers en memoire
 │   │   └── checkers/                   # Vérificateurs (Regex, WordCount)
-|               ├──regex_checker.c      # Vérificateurs d'expression regulieres
+|   |           └──regex_checker.c      # Vérificateurs d'expression regulieres
 │   └── utils/                          # Outils partagés
 │       ├── config.c                    # Lecture du .ini (dans ~/.config/intellieditor)
-│       └── encoding.c                  # Gestion UTF-8 [cite: 90]
+│       └── encoding.c                  # Gestion UTF-8 
 ├── include/                            # Fichiers .h
 |       ├──rules.h                      # prototype du moteur de reglès
-├── data/                               # Règles JSON et dictionnaires [cite: 197, 310]
-├── models/                             # Modèles GGUF (ex: Mistral 7B) [cite: 294]
+├── data/                               # Règles JSON et dictionnaires 
+├── models/                             # Modèles GGUF (ex: Mistral 7B)
+├── Mackfile                            # La compilation via make
 └── CMakeLists.txt                      # Configuration du build
 ```
 
-# Installation des Outils necessaire
+### Prérequis
 
--  cJSON : sur debian `sudo apt install libcjson-dev` ou sur fedora`sudo dnf install cjson cjson-devel`
--  PCRE2 : sur debian `sudo apt install libpcre2-dev` ou sur fedora `sudo dnf install pcre2-devel`
+Assurez-vous d'avoir installé les bibliothèques suivantes sur votre système :
+
+- Distributions ayant pour base Debian :
+```bash
+sudo apt update
+sudo apt install build-essential libcjson-dev libpcre2-dev libgtk-3-dev
+```
+- Distributions ayant pour base Redhat(ou fedora) :
+```bash
+sudo dnf install cjson cjson-devel pcre2-devel
+```
