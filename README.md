@@ -22,7 +22,7 @@ IntelliEditor est un éditeur de texte performant écrit en C, conçu pour aider
 - **IA :** llama.cpp (Modèles GGUF)
 
 ## 4. Compilation et Installation
-Le projet utilise un `Makefile` pour automatiser la gestion des dépendances sur Linux.
+Le projet utilise `CMake` afin de creer un `Makefile` pour automatiser la gestion des dépendances sur Linux.
 
 ## 5. Structure du projet
 
@@ -51,6 +51,7 @@ IntelliEditor/
 |       ├──rules.h                      # prototype du moteur de reglès
 ├── data/                               # Règles JSON et dictionnaires 
 ├── models/                             # Modèles GGUF (ex: Mistral 7B)
+├── tests/                              # Les tests unitaires
 ├── Mackfile                            # La compilation via make
 └── CMakeLists.txt                      # Configuration du build
 ```
@@ -62,9 +63,10 @@ Assurez-vous d'avoir installé les bibliothèques suivantes sur votre système :
 - Distributions ayant pour base Debian :
 ```bash
 sudo apt update
-sudo apt install build-essential libcjson-dev libpcre2-dev libgtk-3-dev
+sudo apt install build-essential libcjson-dev libpcre2-dev libgtk-3-dev cmake
 ```
 - Distributions ayant pour base Redhat(ou fedora) :
 ```bash
-sudo dnf install cjson cjson-devel pcre2-devel
+sudo dnf groupinstall "Development Tools"
+sudo dnf install cjson-devel pcre2-devel gtk3-devel
 ```
