@@ -140,6 +140,9 @@ int main(int argc, char *argv[]) {
     gtk_statusbar_push(GTK_STATUSBAR(statusbar), 0, "Prêt - UTF-8 - FR");
     gtk_box_pack_end(GTK_BOX(vbox), statusbar, FALSE, FALSE, 0);
 
+    // Activer drag & drop
+    gtk_drag_dest_set(window, GTK_DEST_DEFAULT_ALL, NULL, 0, GDK_ACTION_COPY);
+
     gtk_widget_show_all(window);
     gtk_main();
 
