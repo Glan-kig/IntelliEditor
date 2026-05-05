@@ -4,3 +4,4 @@ test_main.c
 intelli_engine
 cmocka_tests
 build
+models
