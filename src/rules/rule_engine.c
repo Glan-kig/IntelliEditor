@@ -64,20 +64,63 @@ RuleStatus check_section_exists(const char* document_text, const char* section_n
     return STATUS_NON_CONFORME;
 }
 
-// Fonction de pilotage qui parcourt le rapport
+/**
+ * @brief Exécute le moteur de règles sur le texte fourni
+ * @param report Rapport contenant les règles (ne doit pas être NULL)
+ * @param current_text Texte à analyser (ne doit pas être NULL)
+ */
 void run_rule_engine(RuleReport* report, const char* current_text) {
+    // Validation des paramètres critiques
+    if (report == NULL) {
+        fprintf(stderr, "[ERROR] run_rule_engine: report est NULL\n");
+        return;
+    }
+    
+    if (current_text == NULL) {
+        fprintf(stderr, "[ERROR] run_rule_engine: current_text est NULL\n");
+        // Marquer toutes les règles comme échouées
+        for (int i = 0; i < report->rule_count; i++) {
+            report->rules[i].status = STATUS_NON_CONFORME;
+        }
+        return;
+    }
+    
+    fprintf(stderr, "[INFO] Exécution du moteur de règles sur %zu caractères\n", 
+            strlen(current_text));
+    
     for (int i = 0; i < report->rule_count; i++) {
         Rule* r = &report->rules[i];
-
-        // On compare le type de vérification défini dans le JSON
+        
+        fprintf(stderr, "[INFO] Exécution de la règle %s [%s]\n", r->id, r->check_type);
+        
+        // Vérification de type "section_exists"
         if (strcmp(r->check_type, "section_exists") == 0) {
-            // On utilise la description ou un paramètre pour le nom de la section
-            // Ici, pour l'exemple, on cherche le mot-clé stocké
-            r->status = check_section_exists(current_text, r->parameter);
-        }else if (strcmp(r->check_type, "regex_forbidden") == 0) {
-            // Le paramètre contient la liste des mots interdits sous forme de regex
-            r->status = check_regex_forbidden(current_text, (char*)r->parameter);
+            // Vérifier que le paramètre est disponible
+            if (r->parameter == NULL) {
+                fprintf(stderr, "[WARN] Règle %s: paramètre section_name est NULL\n", r->id);
+                r->status = STATUS_NON_CONFORME;
+            } else {
+                r->status = check_section_exists(current_text, (char*)r->parameter);
+            }
+        } 
+        // Vérification de type "regex_forbidden"
+        else if (strcmp(r->check_type, "regex_forbidden") == 0) {
+            if (r->parameter == NULL) {
+                fprintf(stderr, "[WARN] Règle %s: paramètre regex_pattern est NULL\n", r->id);
+                r->status = STATUS_NON_CONFORME;
+            } else {
+                r->status = check_regex_forbidden(current_text, (char*)r->parameter);
+            }
         }
+        // Type de vérification inconnu
+        else {
+            fprintf(stderr, "[WARN] Règle %s: type de vérification inconnu '%s'\n", 
+                    r->id, r->check_type);
+            r->status = STATUS_NON_CONFORME;
+        }
+        
+        fprintf(stderr, "[INFO] Résultat : %s\n", 
+                (r->status == STATUS_CONFORME) ? "CONFORME" : "NON_CONFORME");
     }
 }
 
