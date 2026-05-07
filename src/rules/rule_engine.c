@@ -3,21 +3,66 @@
 #include <ctype.h>
 #include "../../include/rules.h"
 
-// Vérificateur simple : cherche si une ligne contient le titre de la section
+/**
+ * @brief Recherche une sous-chaîne insensible à la casse
+ * @param haystack La chaîne à fouiller (peut être NULL)
+ * @param needle La chaîne à chercher (peut être NULL)
+ * @return Pointeur vers la première occurrence ou NULL si non trouvée
+ */
+static char* strcasestr_custom(const char* haystack, const char* needle) {
+    if (haystack == NULL || needle == NULL) {
+        return NULL;
+    }
+    
+    size_t needle_len = strlen(needle);
+    if (needle_len == 0) {
+        return (char*)haystack; // Chaîne vide trouvée au début
+    }
+    
+    for (const char* p = haystack; *p; p++) {
+        if (strncasecmp(p, needle, needle_len) == 0) {
+            return (char*)p; // Trouvé une correspondance
+        }
+    }
+    return NULL; // Non trouvé
+}
+
+/**
+ * @brief Vérifie si une section existe dans le document (insensible à la casse)
+ * @param document_text Le texte du document à analyser
+ * @param section_name Nom de la section à rechercher
+ * @return STATUS_CONFORME si trouvée, STATUS_NON_CONFORME sinon
+ */
 RuleStatus check_section_exists(const char* document_text, const char* section_name) {
-    if (document_text == NULL || section_name == NULL) {
+    // Validation des paramètres
+    if (document_text == NULL) {
+        fprintf(stderr, "[ERROR] check_section_exists: document_text est NULL\n");
         return STATUS_NON_CONFORME;
     }
-
-    // On cherche la présence du nom de la section (ex: "Introduction")
-    // Dans une version plus avancée, on pourrait vérifier si c'est un titre H1/H2
-    char* found = strstr(document_text, section_name);
-
+    
+    if (section_name == NULL) {
+        fprintf(stderr, "[ERROR] check_section_exists: section_name est NULL\n");
+        return STATUS_NON_CONFORME;
+    }
+    
+    // Éviter les chaînes vides
+    if (strlen(section_name) == 0) {
+        fprintf(stderr, "[WARN] check_section_exists: section_name est vide\n");
+        return STATUS_NON_CONFORME;
+    }
+    
+    // Recherche insensible à la casse
+    char* found = strcasestr_custom(document_text, section_name);
+    
     if (found != NULL) {
+        fprintf(stderr, "[DEBUG] Section '%s' trouvée à la position %ld\n", 
+                section_name, (found - document_text));
         return STATUS_CONFORME;
     }
-        return STATUS_NON_CONFORME;
-    }
+    
+    fprintf(stderr, "[DEBUG] Section '%s' introuvable\n", section_name);
+    return STATUS_NON_CONFORME;
+}
 
 // Fonction de pilotage qui parcourt le rapport
 void run_rule_engine(RuleReport* report, const char* current_text) {
