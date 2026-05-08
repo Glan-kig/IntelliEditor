@@ -1,5 +1,6 @@
 #include <string.h>
 #include <ctype.h>
+#include <stdlib.h>
 
 // Sépare le texte par ponctuation forte (. ! ?) pour analyse sémantique.
 void analyze_sentences(const char* full_text) {
