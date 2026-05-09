@@ -1,3 +1,4 @@
+#define PCRE2_CODE_UNIT_WIDTH 8
 #include <stdio.h>
 #include <string.h>
 #include <ctype.h>
@@ -65,9 +66,9 @@ RuleStatus check_section_exists(const char* document_text, const char* section_n
 }
 
 /**
- * @brief Exécute le moteur de règles sur le texte fourni
- * @param report Rapport contenant les règles (ne doit pas être NULL)
- * @param current_text Texte à analyser (ne doit pas être NULL)
+ * @brief Exécute le moteur de règles sur le texte fourni (version optimisée)
+ * @param report Rapport contenant les règles
+ * @param current_text Texte à analyser
  */
 void run_rule_engine(RuleReport* report, const char* current_text) {
     // Validation des paramètres critiques
@@ -76,51 +77,73 @@ void run_rule_engine(RuleReport* report, const char* current_text) {
         return;
     }
     
-    if (current_text == NULL) {
-        fprintf(stderr, "[ERROR] run_rule_engine: current_text est NULL\n");
-        // Marquer toutes les règles comme échouées
-        for (int i = 0; i < report->rule_count; i++) {
-            report->rules[i].status = STATUS_NON_CONFORME;
-        }
-        return;
-    }
+    size_t text_len = strlen(current_text);  // Précalculer UNE SEULE FOIS
+    fprintf(stderr, "[INFO] Exécution du moteur de règles sur %zu caractères\n", text_len);
     
-    fprintf(stderr, "[INFO] Exécution du moteur de règles sur %zu caractères\n", 
-            strlen(current_text));
+    // Cache pour les regex précompilées (local à la fonction)
+    pcre2_code* regex_cache[report->rule_count];  // Tableau temporaire
+    memset(regex_cache, 0, sizeof(regex_cache));  // Initialiser à NULL
     
     for (int i = 0; i < report->rule_count; i++) {
         Rule* r = &report->rules[i];
         
         fprintf(stderr, "[INFO] Exécution de la règle %s [%s]\n", r->id, r->check_type);
         
-        // Vérification de type "section_exists"
-        if (strcmp(r->check_type, "section_exists") == 0) {
-            // Vérifier que le paramètre est disponible
-            if (r->parameter == NULL) {
-                fprintf(stderr, "[WARN] Règle %s: paramètre section_name est NULL\n", r->id);
+        // Utiliser un switch pour éviter strcmp() répétée
+        int check_type_hash = 0;
+        if (strcmp(r->check_type, "section_exists") == 0) check_type_hash = 1;
+        else if (strcmp(r->check_type, "regex_forbidden") == 0) check_type_hash = 2;
+        
+        
+        switch (check_type_hash) {
+            case 1:  // section_exists
+                if (r->parameter == NULL) {
+                    r->status = STATUS_NON_CONFORME;
+                } else {
+                    r->status = check_section_exists(current_text, (char*)r->parameter);
+                }
+                break;
+            case 2:  // regex_forbidden
+                if (r->parameter == NULL) {
+                    r->status = STATUS_NON_CONFORME;
+                } else {
+                    // Précompiler la regex UNE SEULE FOIS par règle
+                    if (regex_cache[i] == NULL) {
+                        int errornumber;
+                        PCRE2_SIZE erroroffset;
+                        regex_cache[i] = pcre2_compile(
+                            (PCRE2_SPTR)r->parameter,
+                            PCRE2_ZERO_TERMINATED,
+                            PCRE2_CASELESS,
+                            &errornumber,
+                            &erroroffset,
+                            NULL
+                        );
+                        if (regex_cache[i] == NULL) {
+                            fprintf(stderr, "[ERROR] Échec compilation regex pour règle %s\n", r->id);
+                            r->status = STATUS_AVERTISSEMENT;
+                            break;
+                        }
+                    }
+                    // Utiliser la version optimisée
+                    r->status = check_regex_forbidden_optimized(current_text, text_len, regex_cache[i]);
+                }
+                break;
+            default:
+                fprintf(stderr, "[WARN] Type inconnu '%s'\n", r->check_type);
                 r->status = STATUS_NON_CONFORME;
-            } else {
-                r->status = check_section_exists(current_text, (char*)r->parameter);
-            }
-        } 
-        // Vérification de type "regex_forbidden"
-        else if (strcmp(r->check_type, "regex_forbidden") == 0) {
-            if (r->parameter == NULL) {
-                fprintf(stderr, "[WARN] Règle %s: paramètre regex_pattern est NULL\n", r->id);
-                r->status = STATUS_NON_CONFORME;
-            } else {
-                r->status = check_regex_forbidden(current_text, (char*)r->parameter);
-            }
-        }
-        // Type de vérification inconnu
-        else {
-            fprintf(stderr, "[WARN] Règle %s: type de vérification inconnu '%s'\n", 
-                    r->id, r->check_type);
-            r->status = STATUS_NON_CONFORME;
+                break;
         }
         
         fprintf(stderr, "[INFO] Résultat : %s\n", 
                 (r->status == STATUS_CONFORME) ? "CONFORME" : "NON_CONFORME");
+    }
+    
+    // Nettoyer le cache
+    for (int i = 0; i < report->rule_count; i++) {
+        if (regex_cache[i] != NULL) {
+            pcre2_code_free(regex_cache[i]);
+        }
     }
 }
 
