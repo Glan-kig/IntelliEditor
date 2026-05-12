@@ -18,7 +18,7 @@ typedef enum {
     STATUS_EN_COURS
 } RuleStatus;
 
-// Structure d'une règle individuelle 
+// Structure d'une règle individuelle
 typedef struct {
     char id[10];               // ex: "R001" [cite: 211]
     char category[32];         // ex: "structure" [cite: 212]
