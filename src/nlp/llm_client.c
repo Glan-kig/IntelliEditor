@@ -34,7 +34,13 @@ RuleStatus ask_llm_semantic_check(const char* section_text, const char* instruct
                  instruction, section_text);
 
         cJSON_AddStringToObject(root, "prompt", full_prompt);
-        cJSON_AddNumberToObject(root, "n_predict", 10);
+        // On réduit la créativité pour avoir une réponse constante
+        cJSON_AddNumberToObject(root, "temperature", 0.0); 
+        cJSON_AddNumberToObject(root, "top_k", 1);
+        // On demande 15 tokens pour être sûr d'avoir le mot complet
+        cJSON_AddNumberToObject(root, "n_predict", 15);
+        // On empêche l'IA de se répéter
+        cJSON_AddNumberToObject(root, "repeat_penalty", 1.2);
 
         char *json_body = cJSON_Print(root);
 
