@@ -1,7 +1,9 @@
 #ifndef RULES_H
 #define RULES_H
 
+#define PCRE2_CODE_UNIT_WIDTH 8
 #include <stdbool.h>
+#include <pcre2.h>
 
 // Niveaux de sévérité définis dans le projet [cite: 164, 213]
 typedef enum {
@@ -45,6 +47,7 @@ void print_compliance_report(RuleReport* report);
 // Prototypes des vérificateurs (Checkers)
 RuleStatus check_section_exists(const char* document_text, const char* section_name);
 RuleStatus check_regex_forbidden(const char* document_text, const char* pattern);
+RuleStatus check_regex_forbidden_optimized(const char *document_text, size_t text_len, pcre2_code *re);
 
 // Prototypes du moteur
 void update_report_score(RuleReport* report);
