@@ -3,7 +3,7 @@
 
 #include "rules.h"
 
-// Initialise Hunspell et le thread LLM
+// Initialise tout le système NLP (chargement de modèles, dictionnaires, etc.)
 void nlp_system_init();
 
 // Vérifie un mot (Hunspell)

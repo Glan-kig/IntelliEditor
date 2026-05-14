@@ -1,7 +1,8 @@
 #include <cjson/cJSON.h>
 #include "../../include/rules.h"
+#include <string.h>
 
-// Ligne par ligne : On cherche la clé "content" dans le JSON
+// On cherche la clé "content" dans le JSON
 RuleStatus parse_llama_json(const char* raw_json) {
     cJSON *json = cJSON_Parse(raw_json);
     cJSON *content = cJSON_GetObjectItem(json, "content");
