@@ -5,9 +5,9 @@
 #include <ctype.h>
 #include "../../include/rules.h"
 
-/* ============================================================================
+/* 
  * MACROS POUR LA MAINTENABILITÉ ET LE DÉBOGAGE
- * ============================================================================ */
+ */
 
 #define LOG_ERROR(msg, ...) fprintf(stderr, "[ERROR] " msg "\n", ##__VA_ARGS__)
 #define LOG_WARN(msg, ...)  fprintf(stderr, "[WARN]  " msg "\n", ##__VA_ARGS__)
@@ -195,10 +195,9 @@ void update_report_score(RuleReport* report) {
  * @brief Fonction principale de diagnostic : exécute toutes les règles sur le texte fourni
  * 
  * Cette fonction applique toutes les règles définies dans le rapport au texte fourni.
- * Elle utilise des optimisations comme la précompilation de regex pour améliorer les performances.
- * Après exécution, elle met à jour automatiquement le score du rapport.
+ * Contrairement à run_rule_engine(), elle utilise les paramètres des règles pour
+ * une exécution dynamique. Après exécution, elle met à jour automatiquement le score.
  * 
- * Les regex constantes sont précompilées une seule fois pour optimisation.
  * Tous les paramètres sont validés. En cas d'erreur, la fonction continue
  * mais met un statut approprié (AVERTISSEMENT ou NON_CONFORME).
  *
@@ -206,7 +205,7 @@ void update_report_score(RuleReport* report) {
  * @param[in] text Texte du document à analyser (ne doit pas être NULL)
  * @return void
  * @note Valide tous les paramètres d'entrée avant exécution
- * @warning Les erreurs de compilation regex n'arrêtent pas le diagnostic
+ * @note Utilise les paramètres des règles pour une logique dynamique
  * @warning Met à jour automatiquement le score du rapport à la fin
  */
 void run_full_diagnostic(RuleReport* report, const char* text) {
@@ -229,29 +228,6 @@ void run_full_diagnostic(RuleReport* report, const char* text) {
     size_t text_len = strlen(text);
     LOG_INFO("Démarrage du diagnostic complet sur %zu caractères\n", text_len);
 
-    // === Section: Précompilation des regex constantes ===
-    pcre2_code* forbidden_regex = NULL;
-    int errornumber;
-    PCRE2_SIZE erroroffset;
-
-    forbidden_regex = pcre2_compile(
-        (PCRE2_SPTR)"\\b(je|moi|mon)\\b",
-        PCRE2_ZERO_TERMINATED,
-        PCRE2_CASELESS,
-        &errornumber,
-        &erroroffset,
-        NULL
-    );
-
-    if (forbidden_regex == NULL) {
-        PCRE2_UCHAR errbuffer[120];
-        pcre2_get_error_message(errornumber, errbuffer, sizeof(errbuffer));
-        LOG_ERROR("Échec compilation regex interdite: %s (offset %zu)", 
-                (char*)errbuffer, erroroffset);
-    } else {
-        LOG_DEBUG("Regex interdite précompilée avec succès\n");
-    }
-
     // === Section: Exécution de chaque règle ===
     for (int rule_idx = 0; rule_idx < report->rule_count; rule_idx++) {
         Rule* current_rule = &report->rules[rule_idx];
@@ -260,22 +236,32 @@ void run_full_diagnostic(RuleReport* report, const char* text) {
 
         // Dispatcher basé sur le type de vérification
         if (strcmp(current_rule->check_type, "section_exists") == 0) {
-            // Vérification de structure : présence de la section "Introduction"
-            current_rule->status = check_section_exists(text, "Introduction");
+            // Vérification de structure : présence d'une section
+            if (current_rule->parameter == NULL) {
+                LOG_WARN("Règle %s: paramètre section_name est NULL", current_rule->id);
+                current_rule->status = STATUS_NON_CONFORME;
+            } else {
+                current_rule->status = check_section_exists(
+                    text, 
+                    (char*)current_rule->parameter
+                );
+            }
         } 
         else if (strcmp(current_rule->check_type, "regex_forbidden") == 0) {
-            // Vérification de style : mots interdits via regex
-            if (forbidden_regex == NULL) {
-                LOG_WARN("Règle %s: regex non compilée, marquée comme avertissement", 
-                        current_rule->id);
-                current_rule->status = STATUS_AVERTISSEMENT;
+            // Vérification de style : mots/patterns interdits via regex
+            if (current_rule->parameter == NULL) {
+                LOG_WARN("Règle %s: paramètre regex_pattern est NULL", current_rule->id);
+                current_rule->status = STATUS_NON_CONFORME;
             } else {
-                current_rule->status = check_regex_forbidden(text, forbidden_regex);
+                current_rule->status = check_regex_forbidden(
+                    text, 
+                    (char*)current_rule->parameter
+                );
             }
         }
         else if (strcmp(current_rule->check_type, "llm_semantic") == 0) {
             // Placeholder pour l'analyse sémantique via LLM
-            LOG_INFO("Règle %s: analyse LLM non implémentée (placeholder)", current_rule->id);
+            LOG_INFO("Règle %s: analyse LLM non implémentée (placeholder)\n", current_rule->id);
             current_rule->status = STATUS_EN_COURS;
         }
         else {
@@ -290,15 +276,9 @@ void run_full_diagnostic(RuleReport* report, const char* text) {
                 (current_rule->status == STATUS_EN_COURS) ? "EN_COURS" : "NON_CONFORME");
     }
 
-    // === Section: Nettoyage des ressources précompilées ===
-    if (forbidden_regex != NULL) {
-        pcre2_code_free(forbidden_regex);
-        LOG_DEBUG("Regex précompilée nettoyée");
-    }
-
     // === Section: Mise à jour du score ===
     update_report_score(report);
-    LOG_INFO("Diagnostic terminé, score mis à jour: %d/%d", 
+    LOG_INFO("Diagnostic terminé, score mis à jour: %d/%d\n", 
             report->rules_ok, report->rule_count);
 }
 
