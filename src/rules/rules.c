@@ -201,9 +201,23 @@ RuleReport* load_rules(const char* filename) {
                 }
             }
 
+            // Extraction du champ "parameter" (optionnel)
+            cJSON* parameter_item = cJSON_GetObjectItem(rule_item, "parameter");
+            if (parameter_item != NULL && cJSON_IsString(parameter_item)) {
+                current_rule->parameter = strdup(parameter_item->valuestring);
+                if (current_rule->parameter == NULL) {
+                    LOG_ERROR(MEMORY_ALLOC_ERROR, "parameter (règle %d)", rule_index);
+                    goto cleanup_rules;
+                }
+                LOG_DEBUG("Paramètre chargé pour règle %d: %s", rule_index, 
+                        (char*)current_rule->parameter);
+            } else {
+                current_rule->parameter = NULL;
+                LOG_DEBUG("Règle %d: pas de paramètre défini", rule_index);
+            }
+
             // Initialisation des champs restants
             current_rule->status = STATUS_EN_COURS;
-            current_rule->parameter = NULL;
 
             LOG_INFO("Règle chargée: %s [%s]", current_rule->id, current_rule->check_type);
             rule_index++;
@@ -222,6 +236,15 @@ RuleReport* load_rules(const char* filename) {
      */
 
 cleanup_rules:
+    // Libérer les paramètres alloués avec strdup()
+    if (rule_report->rules != NULL) {
+        for (int cleanup_idx = 0; cleanup_idx < rule_report->rule_count; cleanup_idx++) {
+            if (rule_report->rules[cleanup_idx].parameter != NULL) {
+                free(rule_report->rules[cleanup_idx].parameter);
+                rule_report->rules[cleanup_idx].parameter = NULL;
+            }
+        }
+    }
     free(rule_report->rules);
 
 cleanup_report:

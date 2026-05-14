@@ -270,7 +270,7 @@ void run_full_diagnostic(RuleReport* report, const char* text) {
                         current_rule->id);
                 current_rule->status = STATUS_AVERTISSEMENT;
             } else {
-                current_rule->status = check_regex_forbidden_optimized(text, text_len, forbidden_regex);
+                current_rule->status = check_regex_forbidden(text, forbidden_regex);
             }
         }
         else if (strcmp(current_rule->check_type, "llm_semantic") == 0) {
@@ -300,6 +300,24 @@ void run_full_diagnostic(RuleReport* report, const char* text) {
     update_report_score(report);
     LOG_INFO("Diagnostic terminé, score mis à jour: %d/%d", 
             report->rules_ok, report->rule_count);
+}
+
+/**
+ * @brief Libère correctement un RuleReport et toutes ses ressources
+ * @param report Rapport à libérer
+ */
+void free_rule_report(RuleReport* report) {
+    if (report == NULL) return;
+    
+    if (report->rules != NULL) {
+        for (int i = 0; i < report->rule_count; i++) {
+            if (report->rules[i].parameter != NULL) {
+                free(report->rules[i].parameter);
+            }
+        }
+        free(report->rules);
+    }
+    free(report);
 }
 
 /**
