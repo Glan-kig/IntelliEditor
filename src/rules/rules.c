@@ -27,41 +27,99 @@
  * 
  * Utilise l'allocation dynamique pour charger le fichier en mémoire. Le
  * contenu est nullifié à la fin pour assurer une chaîne C valide.
+ * 
+ * Gère les erreurs I/O robustement :
+ * - Vérification des appels fseek/ftell
+ * - Validation de la taille du fichier
+ * - Vérification que fread a lu le nombre attendu d'octets
+ * - Nettoyage mémoire en cas d'erreur
  *
  * @param[in] filename Chemin vers le fichier à lire
  * @return Pointeur vers le buffer alloué contenant le contenu, ou NULL en cas d'erreur
  * @note L'appelant doit libérer la mémoire avec free()
- * @warning Si l'allocation échoue, retourne NULL sans LOG (à gérer en amont)
+ * @warning Retourne NULL en cas d'erreur d'ouverture, taille invalide, ou lecture
  */
 char* read_file(const char* filename) {
-    // === Section: Validation ===
+    // === Section: Validation des paramètres ===
+    if (filename == NULL) {
+        LOG_ERROR("read_file: filename est NULL");
+        return NULL;
+    }
+
+    // === Section: Ouverture du fichier ===
     FILE* file = fopen(filename, "rb");
     if (file == NULL) {
+        LOG_ERROR(FILE_READ_ERROR, filename);
         return NULL;
     }
 
     // === Section: Déterminer la taille du fichier ===
-    fseek(file, 0, SEEK_END);
-    long file_length = ftell(file);
-    fseek(file, 0, SEEK_SET);
-
-    // === Section: Allocation et lecture ===
-    char* file_buffer = malloc(file_length + 1);
-    if (file_buffer == NULL) {
+    // Aller à la fin du fichier
+    if (fseek(file, 0, SEEK_END) != 0) {
+        LOG_ERROR("read_file: fseek SEEK_END échoué pour '%s'", filename);
         fclose(file);
         return NULL;
     }
 
-    size_t bytes_read = fread(file_buffer, 1, file_length, file);
-    if (bytes_read != (size_t)file_length) {
-        LOG_WARN("Lecture partielle: %zu/%ld octets", bytes_read, file_length);
+    long file_length = ftell(file);
+    
+    // Vérifier que ftell a réussi (-1L indique une erreur)
+    if (file_length < 0) {
+        LOG_ERROR("read_file: ftell échoué pour '%s'", filename);
+        fclose(file);
+        return NULL;
     }
 
-    // Nullifier la chaîne
+    // Revenir au début du fichier
+    if (fseek(file, 0, SEEK_SET) != 0) {
+        LOG_ERROR("read_file: fseek SEEK_SET échoué pour '%s'", filename);
+        fclose(file);
+        return NULL;
+    }
+
+    LOG_DEBUG("Taille du fichier '%s': %ld octets\n", filename, file_length);
+
+    // === Section: Allocation mémoire ===
+    // Toujours allouer au moins 1 octet pour la terminaison NULL
+    char* file_buffer = malloc((size_t)file_length + 1);
+    if (file_buffer == NULL) {
+        LOG_ERROR(MEMORY_ALLOC_ERROR, "lecture fichier");
+        fclose(file);
+        return NULL;
+    }
+
+    // === Section: Lecture du fichier ===
+    // Pour un fichier vide, fread retournera 0, ce qui est correct
+    if (file_length > 0) {
+        size_t bytes_read = fread(file_buffer, 1, (size_t)file_length, file);
+        
+        // Vérifier que nous avons bien lu le nombre d'octets attendu
+        if (bytes_read != (size_t)file_length) {
+            LOG_ERROR("read_file: lecture incomplète '%s' (%zu/%ld octets lus)", 
+                    filename, bytes_read, file_length);
+            free(file_buffer);
+            fclose(file);
+            return NULL;
+        }
+    }
+
+    // === Section: Finalisation ===
+    // Nullifier la chaîne (fonctionne même si file_length == 0)
     file_buffer[file_length] = '\0';
 
+    // Vérifier que le fichier a bien été lu entièrement
+    int read_check = fgetc(file);
+    if (read_check != EOF) {
+        LOG_WARN("read_file: fichier '%s' contient plus de données que prévu", filename);
+    }
+
     // === Section: Nettoyage des ressources ===
-    fclose(file);
+    if (fclose(file) != 0) {
+        LOG_WARN("read_file: fclose échoué pour '%s'", filename);
+        // On ne retourne pas NULL ici car le fichier a été lu avec succès
+    }
+
+    LOG_INFO("Fichier '%s' lu avec succès (%ld octets)\n", filename, file_length);
     return file_buffer;
 }
 
