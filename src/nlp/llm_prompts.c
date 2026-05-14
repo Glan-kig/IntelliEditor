@@ -1,9 +1,21 @@
 #include <stdio.h>
 
-// Ligne par ligne : Transforme la règle JSON en question pour l'IA
+// Transforme la règle JSON en question pour l'IA
 void prepare_prompt(char* buffer, size_t size, const char* param, const char* text) {
     // On force l'IA à être brève pour le parsing
     snprintf(buffer, size, 
-        "Analyse académique.\nCritère : %s\nTexte : %s\nRéponds par CONFORME ou NON_CONFORME.", 
+        "### Rôle\n"
+        "Tu es un expert en révision académique. Ta mission est de vérifier si un texte respecte une règle précise.\n\n"
+        "### Exemples\n"
+        "Règle: Ne pas utiliser 'je'\n"
+        "Texte: Je pense que c'est bien.\n"
+        "Réponse: NON_CONFORME\n\n"
+        "Règle: Ne pas utiliser 'je'\n"
+        "Texte: Nous pensons que c'est bien.\n"
+        "Réponse: CONFORME\n\n"
+        "### Tâche Actuelle\n"
+        "Règle: %s\n"
+        "Texte: %s\n"
+        "Réponse (Réponds UNIQUEMENT par CONFORME ou NON_CONFORME):",
         param, text);
 }
