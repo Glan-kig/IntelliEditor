@@ -15,70 +15,131 @@
 #define LOG_DEBUG(msg, ...) fprintf(stderr, "[DEBUG] " msg "\n", ##__VA_ARGS__)
 
 /**
- * @brief Recherche une sous-chaîne insensible à la casse
- * @param haystack La chaîne à fouiller (peut être NULL)
- * @param needle La chaîne à chercher (peut être NULL)
- * @return Pointeur vers la première occurrence ou NULL si non trouvée
+ * @brief Échappe les métacaractères PCRE2 dans une chaîne littérale
+ * 
+ * Cette fonction prépare une chaîne pour être utilisée comme pattern PCRE2 littéral.
+ * Elle échappe tous les métacaractères PCRE2 (., ^, $, *, +, ?, (), [], {}, |, \)
+ * pour que la recherche traite la chaîne comme un texte littéral et non un pattern.
+ * 
+ * Cela permet de chercher des textes contenant des caractères spéciaux sans
+ * qu'ils soient interprétés comme des quantificateurs ou des assertions regex.
+ *
+ * @param[in] text Chaîne à échapper (peut être NULL)
+ * @return Chaîne allouée avec métacaractères échappés, ou NULL en cas d'erreur
+ * @note L'appelant doit libérer la mémoire retournée avec free()
+ * @warning Retourne NULL si text est NULL ou si l'allocation échoue
+ * @warning La chaîne retournée doit être utilisée immédiatement avec pcre2_compile()
  */
-static char* strcasestr_custom(const char* haystack, const char* needle) {
-    if (haystack == NULL || needle == NULL) {
-        return NULL;
+static char* escape_pcre2_literal(const char* text) {
+    if (text == NULL) return NULL;
+
+    const char* meta = ".^$*+?()[]{}|\\";
+    size_t len = 0;
+    for (const char* p = text; *p; ++p) {
+        if (strchr(meta, *p) != NULL) len++;
+        len++;
     }
-    
-    size_t needle_len = strlen(needle);
-    if (needle_len == 0) {
-        return (char*)haystack; // Chaîne vide trouvée au début
-    }
-    
-    for (const char* p = haystack; *p; p++) {
-        if (strncasecmp(p, needle, needle_len) == 0) {
-            return (char*)p; // Trouvé une correspondance
+
+    char* result = malloc(len + 1);
+    if (!result) return NULL;
+
+    char* dst = result;
+    for (const char* p = text; *p; ++p) {
+        if (strchr(meta, *p) != NULL) {
+            *dst++ = '\\';
         }
+        *dst++ = *p;
     }
-    return NULL; // Non trouvé
+    *dst = '\0';
+    return result;
 }
 
 /**
- * @brief Vérifie si une section existe dans le document (insensible à la casse)
+ * @brief Vérifie si une section existe dans le document (UTF-8 aware, case-insensitive)
  * 
- * Recherche la présence du nom de section fourni dans le texte du document,
- * sans tenir compte de la casse. Utilise une comparaison caractère par
- * caractère pour une recherche case-insensitive robuste.
+ * Recherche la présence d'une section (titre) dans un document en utilisant PCRE2.
+ * Cette implémentation supporte :
+ * - UTF-8 complet avec caractères accentués (É, è, ç, ô, etc.)
+ * - Recherche insensible à la casse Unicode
+ * - Échappement automatique des métacaractères pour recherche littérale
+ * 
+ * La recherche traite section_name comme du texte littéral, pas comme un pattern regex.
+ * Par exemple, chercher "Introduction." trouvera "Introduction." et pas "Introductionfoo".
  *
- * @param[in] document_text Texte du document à analyser (peut être NULL)
- * @param[in] section_name Nom de la section à rechercher (peut être NULL)
+ * @param[in] document_text Texte du document à analyser (doit être UTF-8 valide)
+ * @param[in] section_name Nom de la section à rechercher (texte littéral, UTF-8 valide)
  * @return STATUS_CONFORME si la section est trouvée, STATUS_NON_CONFORME sinon
- * @note Retourne STATUS_NON_CONFORME pour les paramètres NULL (par sécurité)
- * @warning Recherche sensible à l'ordre mais insensible à la casse
+ * @return STATUS_AVERTISSEMENT en cas d'erreur de compilation du pattern PCRE2
+ * @note Valide les paramètres avant exécution
+ * @warning Retourne STATUS_NON_CONFORME pour NULL ou chaîne vide
+ * @warning Dépend de PCRE2 compilé avec support UTF-8 et UCP
  */
 RuleStatus check_section_exists(const char* document_text, const char* section_name) {
     // === Section: Validation des paramètres ===
-    if (document_text == NULL) {
-        LOG_ERROR("check_section_exists: document_text est NULL");
+    if (document_text == NULL || section_name == NULL) {
+        LOG_ERROR("check_section_exists: paramètres NULL");
         return STATUS_NON_CONFORME;
     }
 
-    if (section_name == NULL) {
-        LOG_ERROR("check_section_exists: section_name est NULL");
-        return STATUS_NON_CONFORME;
-    }
-
-    if (strlen(section_name) == 0) {
+    if (section_name[0] == '\0') {
         LOG_WARN("check_section_exists: section_name est vide");
         return STATUS_NON_CONFORME;
     }
 
-    // === Section: Recherche insensible à la casse ===
-    char* found_position = strcasestr_custom(document_text, section_name);
-
-    if (found_position != NULL) {
-        LOG_DEBUG("Section '%s' trouvée à la position %ld", 
-                section_name, (found_position - document_text));
-        return STATUS_CONFORME;
+    // === Section: Échappement du nom de section ===
+    char* escaped = escape_pcre2_literal(section_name);
+    if (!escaped) {
+        LOG_ERROR("check_section_exists: échec allocation mémoire (escape)");
+        return STATUS_NON_CONFORME;
     }
 
-    LOG_DEBUG("Section '%s' introuvable dans le document", section_name);
-    return STATUS_NON_CONFORME;
+    // === Section: Compilation du pattern ===
+    int errornumber;
+    PCRE2_SIZE erroroffset;
+    pcre2_code* re = pcre2_compile(
+        (PCRE2_SPTR)escaped,
+        PCRE2_ZERO_TERMINATED,
+        PCRE2_UTF | PCRE2_UCP | PCRE2_CASELESS,  // UTF-8 + Unicode + case-insensitive
+        &errornumber,
+        &erroroffset,
+        NULL
+    );
+
+    free(escaped);
+    if (re == NULL) {
+        PCRE2_UCHAR errbuffer[120];
+        pcre2_get_error_message(errornumber, errbuffer, sizeof(errbuffer));
+        LOG_ERROR("check_section_exists: compilation regex échouée: %s (offset %zu)", 
+                (char*)errbuffer, erroroffset);
+        return STATUS_AVERTISSEMENT;
+    }
+
+    // === Section: Exécution de la recherche ===
+    pcre2_match_data* match_data = pcre2_match_data_create_from_pattern(re, NULL);
+    if (!match_data) {
+        LOG_ERROR("check_section_exists: allocation match_data échouée");
+        pcre2_code_free(re);
+        return STATUS_NON_CONFORME;
+    }
+
+    int rc = pcre2_match(
+        re,
+        (PCRE2_SPTR)document_text,
+        strlen(document_text),
+        0,  // offset de départ
+        0,  // options
+        match_data,
+        NULL
+    );
+
+    // === Section: Nettoyage et résultat ===
+    pcre2_match_data_free(match_data);
+    pcre2_code_free(re);
+
+    RuleStatus status = (rc >= 0) ? STATUS_CONFORME : STATUS_NON_CONFORME;
+    LOG_DEBUG("check_section_exists: recherche de '%s' => %s", section_name,
+            (status == STATUS_CONFORME) ? "trouvée" : "non trouvée");
+    return status;
 }
 
 /**

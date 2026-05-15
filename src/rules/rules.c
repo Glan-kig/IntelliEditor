@@ -4,9 +4,9 @@
 #include <cjson/cJSON.h>
 #include "../../include/rules.h"
 
-/* ============================================================================
+/* 
  * MACROS ET CONSTANTES POUR LA MAINTENABILITÉ
- * ============================================================================ */
+ */
 
 #define LOG_ERROR(msg, ...) fprintf(stderr, "[ERROR] " msg "\n", ##__VA_ARGS__)
 #define LOG_WARN(msg, ...)  fprintf(stderr, "[WARN]  " msg "\n", ##__VA_ARGS__)
@@ -18,9 +18,9 @@
 #define RULE_FIELD_ERROR    "règle %d: champ '%s' manquant ou invalide"
 #define MEMORY_ALLOC_ERROR  "échec allocation mémoire (%s)"
 
-/* ============================================================================
+/* 
  * FONCTION UTILITAIRE : read_file()
- * ============================================================================ */
+ */
 
 /**
  * @brief Lit un fichier entier et retourne son contenu dans une chaîne allouée
@@ -123,9 +123,9 @@ char* read_file(const char* filename) {
     return file_buffer;
 }
 
-/* ============================================================================
+/* 
  * FONCTION PRINCIPALE : load_rules()
- * ============================================================================ */
+ */
 
 /**
  * @brief Charge les règles depuis un fichier JSON avec gestion mémoire robuste
@@ -143,7 +143,8 @@ char* read_file(const char* filename) {
  *       "id": "R001",
  *       "description": "Vérifier introduction",
  *       "check_type": "section_exists",
- *       "severity": "error"
+ *       "severity": "error",
+ *       "parameter": "Introduction"
  *     }
  *   ]
  * }
@@ -200,7 +201,7 @@ RuleReport* load_rules(const char* filename) {
         // Pas d'erreur critique : on retourne un rapport vide
     } else {
         // === Section: Allocation du tableau de règles ===
-        rule_report->rules = malloc(sizeof(Rule) * rule_report->rule_count);
+        rule_report->rules = calloc((size_t)rule_report->rule_count, sizeof(Rule));
         if (rule_report->rules == NULL) {
             LOG_ERROR(MEMORY_ALLOC_ERROR, "tableau de règles");
             goto cleanup_report;
