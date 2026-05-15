@@ -11,6 +11,7 @@
 #define LOG_ERROR(msg, ...) fprintf(stderr, "[ERROR] " msg "\n", ##__VA_ARGS__)
 #define LOG_WARN(msg, ...)  fprintf(stderr, "[WARN]  " msg "\n", ##__VA_ARGS__)
 #define LOG_INFO(msg, ...)  fprintf(stderr, "[INFO]  " msg "\n", ##__VA_ARGS__)
+#define LOG_DEBUG(msg, ...) fprintf(stderr, "[DEBUG] " msg "\n", ##__VA_ARGS__)
 
 #define FILE_READ_ERROR     "échec lecture fichier '%s'"
 #define JSON_PARSE_ERROR    "JSON invalide dans '%s'"
