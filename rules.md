@@ -161,14 +161,15 @@ Le champ `severity` est optionnel ; s’il est absent ou invalide, la valeur par
 
 Pour compiler et exécuter le programme de test :
 
-```bash
+```zsh
 gcc -I./include \
     src/rules/rule_engine.c \
     src/rules/rules.c \
     src/rules/checkers/regex_checker.c \
+    src/utils/encoding.c \
     src/rules/test_main.c \
-    -lcjson -lpcre2-8 -o intelli_editor
-./intelli_editor
+    -lcjson -lpcre2-8 -lcurl \
+  -o intelli_engine
 ```
 
 ## Résumé
