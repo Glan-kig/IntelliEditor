@@ -4,6 +4,7 @@
 #include <string.h>
 #include <ctype.h>
 #include "../../include/rules.h"
+#include "../../include/utils.h"
 
 /* 
  * MACROS POUR LA MAINTENABILITÉ ET LE DÉBOGAGE
@@ -172,7 +173,20 @@ void run_rule_engine(RuleReport* report, const char* current_text) {
         return;
     }
 
-    size_t text_length = strlen(current_text);
+    char *sanitized_text = sanitize_text(current_text);
+    const char *analysis_text = current_text;
+
+    if (sanitized_text) {
+        analysis_text = sanitized_text;
+    } else {
+        LOG_WARN("run_rule_engine: impossible de nettoyer le texte, utilisation du texte brut");
+    }
+
+    if (!is_valid_utf8(analysis_text)) {
+        LOG_WARN("run_rule_engine: texte non UTF-8 valide après nettoyage");
+    }
+
+    size_t text_length = strlen(analysis_text);
     LOG_INFO("Exécution du moteur de règles sur %zu caractères", text_length);
 
     // === Section: Exécution de chaque règle ===
@@ -190,7 +204,7 @@ void run_rule_engine(RuleReport* report, const char* current_text) {
                 current_rule->status = STATUS_NON_CONFORME;
             } else {
                 current_rule->status = check_section_exists(
-                    current_text, 
+                    analysis_text, 
                     (char*)current_rule->parameter
                 );
             }
@@ -200,7 +214,7 @@ void run_rule_engine(RuleReport* report, const char* current_text) {
                 current_rule->status = STATUS_NON_CONFORME;
             } else {
                 current_rule->status = check_regex_forbidden(
-                    current_text, 
+                    analysis_text, 
                     (char*)current_rule->parameter
                 );
             }
@@ -213,6 +227,7 @@ void run_rule_engine(RuleReport* report, const char* current_text) {
         LOG_INFO("Résultat : %s", 
                 (current_rule->status == STATUS_CONFORME) ? "CONFORME" : "NON_CONFORME");
     }
+    free(sanitized_text);
 }
 
 /**
@@ -289,57 +304,76 @@ void run_full_diagnostic(RuleReport* report, const char* text) {
     size_t text_len = strlen(text);
     LOG_INFO("Démarrage du diagnostic complet sur %zu caractères\n", text_len);
 
+    char* analysis_text = NULL;
+    if (!is_valid_utf8(text)) {
+        LOG_WARN("run_full_diagnostic: texte non valide UTF-8, tentative de sanitization");
+        analysis_text = sanitize_text(text);
+        if (analysis_text == NULL) {
+            LOG_ERROR("run_full_diagnostic: sanitization échouée");
+            for (int rule_idx = 0; rule_idx < report->rule_count; rule_idx++) {
+                report->rules[rule_idx].status = STATUS_NON_CONFORME;
+            }
+            update_report_score(report);
+            return;
+        }
+    } else {
+        analysis_text = strdup(text);
+        if (analysis_text == NULL) {
+            LOG_ERROR("run_full_diagnostic: échec d'allocation de analysis_text");
+            for (int rule_idx = 0; rule_idx < report->rule_count; rule_idx++) {
+                report->rules[rule_idx].status = STATUS_NON_CONFORME;
+            }
+            update_report_score(report);
+            return;
+        }
+    }
+
     // === Section: Exécution de chaque règle ===
     for (int rule_idx = 0; rule_idx < report->rule_count; rule_idx++) {
         Rule* current_rule = &report->rules[rule_idx];
 
         LOG_INFO("Exécution de la règle %s [%s]", current_rule->id, current_rule->check_type);
 
-        // Dispatcher basé sur le type de vérification
         if (strcmp(current_rule->check_type, "section_exists") == 0) {
-            // Vérification de structure : présence d'une section
             if (current_rule->parameter == NULL) {
                 LOG_WARN("Règle %s: paramètre section_name est NULL", current_rule->id);
                 current_rule->status = STATUS_NON_CONFORME;
             } else {
                 current_rule->status = check_section_exists(
-                    text, 
+                    analysis_text,
                     (char*)current_rule->parameter
                 );
             }
-        } 
-        else if (strcmp(current_rule->check_type, "regex_forbidden") == 0) {
-            // Vérification de style : mots/patterns interdits via regex
+        } else if (strcmp(current_rule->check_type, "regex_forbidden") == 0) {
             if (current_rule->parameter == NULL) {
-                LOG_WARN("Règle %s: paramètre regex_pattern est NULL", current_rule->id);
+                LOG_WARN("Règle %s: paramètre regex_pattern est NULL", 
+                    current_rule->id);
                 current_rule->status = STATUS_NON_CONFORME;
             } else {
                 current_rule->status = check_regex_forbidden(
-                    text, 
+                    analysis_text,
                     (char*)current_rule->parameter
                 );
             }
-        }
-        else if (strcmp(current_rule->check_type, "llm_semantic") == 0) {
-            // Placeholder pour l'analyse sémantique via LLM
-            LOG_INFO("Règle %s: analyse LLM non implémentée (placeholder)\n", current_rule->id);
+        } else if (strcmp(current_rule->check_type, "llm_semantic") == 0) {
+            LOG_INFO("Règle %s: analyse LLM non implémentée (placeholder)\n",
+                    current_rule->id);
             current_rule->status = STATUS_EN_COURS;
-        }
-        else {
-            // Type de vérification inconnu
-            LOG_WARN("Règle %s: type de vérification inconnu '%s'", 
+        } else {
+            LOG_WARN("Règle %s: type de vérification inconnu '%s'",
                     current_rule->id, current_rule->check_type);
             current_rule->status = STATUS_NON_CONFORME;
         }
 
         LOG_DEBUG("Résultat règle %s: %s\n", current_rule->id,
-                (current_rule->status == STATUS_CONFORME) ? "CONFORME" : 
+                (current_rule->status == STATUS_CONFORME) ? "CONFORME" :
                 (current_rule->status == STATUS_EN_COURS) ? "EN_COURS" : "NON_CONFORME");
     }
 
-    // === Section: Mise à jour du score ===
+    free(analysis_text);
     update_report_score(report);
-    LOG_INFO("Diagnostic terminé, score mis à jour: %d/%d\n", 
+    
+    LOG_INFO("Diagnostic terminé, score mis à jour: %d/%d\n",
             report->rules_ok, report->rule_count);
 }
 
@@ -383,10 +417,10 @@ void print_compliance_report(RuleReport* report) {
     // === Section: Affichage de l'en-tête et du score ===
     printf("\n");
     printf("╔════════════════════════════════════════════════╗\n");
-    printf("║   RAPPORT DE CONFORMITÉ ACADÉMIQUE             ║\n");
+    printf("║       RAPPORT DE CONFORMITÉ ACADÉMIQUE         ║\n");
     printf("║────────────────────────────────────────────────║\n");
-    printf("║   Score global: %d / %d règles respectées", report->rules_ok, report->rule_count);
-    printf("        ║\n");
+    printf("║      Score global: %d / %d règles respectées", report->rules_ok, report->rule_count);
+    printf("      ║\n");
     printf("╚════════════════════════════════════════════════╝\n");
 
     // === Section: Affichage des détails ===
