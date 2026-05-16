@@ -2,6 +2,7 @@
 #define RULES_H
 
 #include <stdbool.h>
+#include <gtk/gtk.h>
 
 // Niveaux de sévérité définis dans le projet [cite: 164, 213]
 typedef enum {
@@ -9,6 +10,11 @@ typedef enum {
     SEVERITY_WARNING,
     SEVERITY_ERROR
 } RuleSeverity;
+
+
+/// Prototype de la fonction qui construit le panneau des règles
+GtkWidget* create_rules_panel();
+
 
 // États de conformité pour l'affichage 
 typedef enum {

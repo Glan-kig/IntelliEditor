@@ -1,41 +1,58 @@
 # IntelliEditor
-Notre projet est un Éditeur de texte intelligent, Le but est d'aider les étudiants  a réaliser leur travail de fin de cycle sans trop se prendre la tete sur la norme, car l'IA intégrer va  s'assurer de faire respecter la norme Ecriture selon  celle qui sera imposer
+IntelliEditor est un éditeur de texte intelligent conçu pour fonctionner hors ligne sur Fedora/Linux avec une interface GTK. Il combine édition de texte et assistance à la rédaction en français, avec chargement de règles, correction orthographique et panneau de conformité.
 
 # Fonctionnalités
 
-- Parser un fichier JSON`(avec cJSON)` contenat les normes de redactions
-- Verification d'expressions reguliere `(avec PCRE2)` pour detecter automatiquement l'usage de la premiere personne("je", "mon", "ma", etc.).
+- Édition de texte avec interface GTK
+- Chargement de règles JSON personnalisables
+- Panneau de conformité avec statuts
+- Correction orthographique en français
+- Export texte et RTF
+- Interface entièrement en français
 
 # Structure du projet
 
-```Arboressence
+```Arborescence
 IntelliEditor/
 ├── src/
-│   ├── main.c                          # Point d'entrée (Initialisation GTK)
-│   ├── editor/                         # [DEV-A] Cœur de l'éditeur
-│   │   ├── gap_buffer.c                # Gestion du texte en O(1)
-│   │   └── undo_redo.c                 # Pattern Command
-│   ├── ui/                             # [DEV-B] Interface GTK
-│   │   ├── main_window.c               # Fenêtre et menus
-│   │   └── rules_panel.c               # Panneau latéral des règles
-│   ├── nlp/                            # [DEV-C] Intelligence Linguistique
-│   │   ├── hunspell_wrap.c             # Correction orthographique
-│   │   └── llm_interface.c             # Liaison avec llama.cpp
-│   ├── rules/                          # [DEV-D] Moteur de règles
-│   │   ├── rule_engine.c               # Logique de vérification
-│   │   └── checkers/                   # Vérificateurs (Regex, WordCount)
-|               ├──regex_checker.c      # Vérificateurs d'expression regulieres
-│   └── utils/                          # Outils partagés
-│       ├── config.c                    # Lecture du .ini (dans ~/.config/intellieditor)
-│       └── encoding.c                  # Gestion UTF-8 [cite: 90]
-├── include/                            # Fichiers .h
-|       ├──rules.h                      # prototype du moteur de reglès
-├── data/                               # Règles JSON et dictionnaires [cite: 197, 310]
-├── models/                             # Modèles GGUF (ex: Mistral 7B) [cite: 294]
-└── CMakeLists.txt                      # Configuration du build
+│   ├── main.c
+│   ├── editor/
+│   │   ├── gap_buffer.c
+│   │   └── undo_redo.c
+│   ├── ui/
+│   │   ├── main_window.c
+│   │   └── rules_panel.c
+│   ├── nlp/
+│   │   ├── hunspell_wrap.c
+│   │   └── llm_interface.c
+│   ├── rules/
+│   │   ├── rule_engine.c
+│   │   └── rules.c
+│   └── utils/
+│       ├── config.c
+│       └── encoding.c
+└── include/
+    └── rules.h
 ```
 
-# Installation des Outils necessaire
+# Environnement Fedora
 
--  cJSON : sur debian `sudo apt install libcjson-dev` ou sur fedora`sudo dnf install cjson cjson-devel`
--  PCRE2 : sur debian `sudo apt install libpcre2-dev` ou sur fedora `sudo dnf install pcre2-devel`
+Interface utilisateur GTK 3 sur Fedora/Linux. Pas de Win32.
+
+# Installation
+
+- GTK 3 : sudo dnf install gtk3 gtk3-devel
+- cJSON : sudo dnf install cjson cjson-devel
+- PCRE2 : sudo dnf install pcre2-devel
+- Hunspell : sudo dnf install hunspell hunspell-devel
+- gcc : sudo dnf install gcc
+
+# Compilation
+
+gcc src/ui/main_window.c src/ui/rules_panel.c src/rules/rules.c src/rules/rule_engine.c src/nlp/hunspell_wrap.c src/nlp/llm_interface.c src/editor/gap_buffer.c src/editor/undo_redo.c src/utils/config.c src/utils/encoding.c $(pkg-config --cflags --libs gtk+-3.0) -o intellieditor
+
+# Notes
+
+- UI avec barre de menus, barre d'outils, éditeur et panneau de règles.
+- Barre de statut : mots, position, encodage.
+- Chargement de règles JSON et export RTF.

@@ -1,7 +1,7 @@
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
-#include <cjson/cJSON.h>
+#include "../../include/cJSON.h"
 #include "../../include/rules.h"
 
 // Fonction utilitaire pour lire tout un fichier en mémoire

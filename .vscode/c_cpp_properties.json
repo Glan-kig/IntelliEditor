@@ -1,0 +1,28 @@
+{
+    "configurations": [
+        {
+            "name": "Linux",
+            "includePath": [
+                "${workspaceFolder}/**",
+                "/usr/include/gtk-3.0",
+                "/usr/include/glib-2.0",
+                "/usr/lib64/glib-2.0/include",
+                "/usr/include/cairo",
+                "/usr/include/pango-1.0",
+                "/usr/include/atk-1.0",
+                "/usr/include/gdk-pixbuf-2.0",
+                "/usr/include/gio-unix-2.0",
+                "/usr/include",
+                "/usr/lib64"
+            ],
+            "defines": [
+                "WITH_GZFILEOP"
+            ],
+            "compilerPath": "/usr/bin/gcc",
+            "cStandard": "c11",
+            "cppStandard": "c++17",
+            "intelliSenseMode": "gcc-x64"
+        }
+    ],
+    "version": 4
+}
