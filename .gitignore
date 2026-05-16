@@ -5,3 +5,4 @@ intelli_engine
 cmocka_tests
 build
 models
+.vscode

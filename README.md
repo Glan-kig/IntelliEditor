@@ -10,8 +10,8 @@ IntelliEditor est un éditeur de texte performant écrit en C, conçu pour aider
 
 - **Kalunga Kalwa Eddy** : DEV-A - Infrastructure & Éditeur (Gap Buffer).
 - **Caleb** : DEV-B - Interface Utilisateur (GTK 3).
-- **Imelda** : DEV-C - LLM & Moteur NLP (llama.cpp).
-- **Glan Ilunga Kayembe** : DEV-D - Moteur de règles & Intégration générale.
+- **Imelda** : DEV-C - LLM & Moteur NLP (llama.cpp). [details](IA.md)
+- **Ilunga Kayembe Glan** : DEV-D - Moteur de règles & Intégration générale. [details](rules.md)
 
 ## 3. Stack Technique (Linux)
 
@@ -26,7 +26,7 @@ Le projet utilise `CMake` afin de creer un `Makefile` pour automatiser la gestio
 
 ## 5. Structure du projet
 
-```Arboressence
+```zsh
 IntelliEditor/
 ├── src/
 │   ├── main.c                          # Point d'entrée (Initialisation GTK)
@@ -61,12 +61,12 @@ IntelliEditor/
 Assurez-vous d'avoir installé les bibliothèques suivantes sur votre système :
 
 - Distributions ayant pour base Debian :
-```bash
+```zsh
 sudo apt update
 sudo apt install build-essential libcjson-dev libpcre2-dev libgtk-3-dev cmake
 ```
 - Distributions ayant pour base Redhat(ou fedora) :
-```bash
+```zsh
 sudo dnf groupinstall "Development Tools"
 sudo dnf install cjson-devel pcre2-devel gtk3-devel
 ```
