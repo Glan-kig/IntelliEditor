@@ -16,7 +16,7 @@ GapBuffer* gb_create(size_t capacity) {
 }
 
 /**
- * Calcule la longueur réelle du texte (sans le gap).
+ * Calcule la longueur réelle du texte (sans le gap).sm
  */
 size_t gb_get_content_length(GapBuffer *gb) {
     return gb->gap_start + (gb->size - gb->gap_end);
