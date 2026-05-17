@@ -1,7 +1,9 @@
 #ifndef RULES_H
 #define RULES_H
 
+
 #include <stdbool.h>
+
 
 // Niveaux de sévérité définis dans le projet [cite: 164, 213]
 typedef enum {
@@ -50,5 +52,7 @@ RuleStatus check_regex_forbidden(const char* document_text, const char* pattern)
 void update_report_score(RuleReport* report);
 void run_full_diagnostic(RuleReport* report, const char* text);
 void run_rule_engine(RuleReport* report, const char* current_text);
+
+void free_rule_report(RuleReport* report);
 
 #endif

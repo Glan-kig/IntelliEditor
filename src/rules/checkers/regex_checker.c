@@ -11,7 +11,7 @@
  * @param re Regex précompilée (doit être valide)
  * @return STATUS_NON_CONFORME si trouvé, STATUS_CONFORME sinon
  */
-RuleStatus check_regex_forbidden_optimized(const char *document_text, size_t text_len, pcre2_code *re) {
+static RuleStatus check_regex_forbidden_optimized(const char *document_text, size_t text_len, pcre2_code *re) {
     if (document_text == NULL || re == NULL) {
         fprintf(stderr, "[ERROR] check_regex_forbidden_optimized: paramètres invalides\n");
         return STATUS_NON_CONFORME;

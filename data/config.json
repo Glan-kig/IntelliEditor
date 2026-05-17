@@ -1,0 +1,6 @@
+{
+    "server_url": "http://localhost:8080/completion",
+    "rules_path": "data/rules.json",
+    "timeout": 5,
+    "temperature": 0.2
+}
