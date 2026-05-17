@@ -25,22 +25,22 @@ RuleStatus ask_llm_semantic_check(const char* section_text, const char* instruct
     RuleStatus status = STATUS_NON_CONFORME;
 
     if(curl) {
-        // Construction du JSON
         cJSON *root = cJSON_CreateObject();
-        char full_prompt[4096]; // Augmenté pour éviter les troncatures de texte long
         
-        snprintf(full_prompt, sizeof(full_prompt), 
-                 "Instruction: %s\nTexte: %s\nRéponse (CONFORME/NON_CONFORME):", 
-                 instruction, section_text);
+        // On augmente la taille pour accueillir les exemples du Few-Shot
+        char full_prompt[8192] = {0}; 
+        
+        // ON APPELLE LA FONCTION DE TEMPLATE (déclarée dans llm_prompts.h)
+        prepare_prompt(full_prompt, sizeof(full_prompt), instruction, section_text);
 
         cJSON_AddStringToObject(root, "prompt", full_prompt);
-        // On réduit la créativité pour avoir une réponse constante
-        cJSON_AddNumberToObject(root, "temperature", 0.0); 
+        
+        //  Paramètres stricts pour brider le modèle 1B
+        cJSON_AddNumberToObject(root, "n_predict", 10);
+        cJSON_AddNumberToObject(root, "temperature", 0.0);
         cJSON_AddNumberToObject(root, "top_k", 1);
-        // On demande 15 tokens pour être sûr d'avoir le mot complet
-        cJSON_AddNumberToObject(root, "n_predict", 15);
-        // On empêche l'IA de se répéter
-        cJSON_AddNumberToObject(root, "repeat_penalty", 1.2);
+        // Force le modèle à choisir STRICTEMENT entre les deux chaînes exactes
+        cJSON_AddStringToObject(root, "grammar", "root ::= \"CONFORME\" | \"NON_CONFORME\"");
 
         char *json_body = cJSON_Print(root);
 
@@ -58,18 +58,20 @@ RuleStatus ask_llm_semantic_check(const char* section_text, const char* instruct
         // Exécution de l'appel
         CURLcode res = curl_easy_perform(curl);
         
-        if(res == CURLE_OK) {
-            // Log pour debug (optionnel)
-            printf("Réponse brute : %s\n", response_buffer);
+    if (res == CURLE_OK) {
+    printf("Réponse brute : %s\n", response_buffer);
 
-            if (strstr(response_buffer, "CONFORME") != NULL && strstr(response_buffer, "NON_CONFORME") == NULL) {
-                status = STATUS_CONFORME;
-            } else {
-                status = STATUS_NON_CONFORME;
-            }
+    // On cherche la première occurrence de chaque mot
+        char *pos_conforme = strstr(response_buffer, "CONFORME");
+        char *pos_non_conforme = strstr(response_buffer, "NON_CONFORME");
+
+        // Si CONFORME apparaît en premier, ou s'il n'y a pas du tout de NON_CONFORME
+        if (pos_conforme != NULL && (pos_non_conforme == NULL || pos_conforme < pos_non_conforme)) {
+        status = STATUS_CONFORME;
         } else {
-            fprintf(stderr, "Erreur CURL: %s\n", curl_easy_strerror(res));
-        }
+        status = STATUS_NON_CONFORME;
+       }
+    }
 
         // Nettoyage rigoureux
         curl_slist_free_all(headers);
