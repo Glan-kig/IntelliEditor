@@ -14,8 +14,7 @@ CFLAGS = -I./include -Wall -Wextra -g
 # Bibliothèques à lier (LDFLAGS)
 # -lcjson : pour le JSON
 # -lpcre2-8 : pour les Regex
-LDFLAGS = -lcjson -lpcre2-8 -lm
-
+LDFLAGS = -lcjson -lpcre2-8
 
 # Liste de tes fichiers sources (DEV-D)
 SRC = src/rules/rules.c \

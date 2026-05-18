@@ -1,42 +1,39 @@
 # DEV-B : Interface Utilisateur GTK
 
 ## Description de ma partie
-Je suis en charge de l'interface utilisateur du projet IntelliEditor.
+Je suis en charge de l’interface utilisateur du projet **IntelliEditor**.  
 Ma partie couvre principalement :
 
-- `src/ui/main_window.c`
-  - création de la fenêtre principale
-  - menus et barre d'outils
-  - gestion des actions utilisateur (nouveau, ouvrir, sauvegarder, exporter RTF, corrections, chargement des règles)
-- `src/ui/rules_panel.c`
-  - construction du panneau latéral des règles
-  - affichage de l'état de conformité
-- `include/ui.h`
-  - déclaration des fonctions UI partagées
+- `src/ui/main_window.c`  
+  - création de la fenêtre principale  
+  - menus et barre d’outils  
+  - gestion des actions utilisateur (nouveau, ouvrir, sauvegarder, exporter RTF, corrections, chargement des règles)  
+  - fonctionnalités avancées : zoom (50–100), marges type Word, sauts de page, bascule thème clair/sombre, gestion police/couleur/styles  
+- `src/ui/rules_panel.c`  
+  - construction du panneau latéral des règles  
+  - affichage de l’état de conformité et des issues  
+  - mise à jour dynamique via `rules_panel_update_from_report()`  
+- `src/utils/rules_stub.c`  
+  - stub minimal pour charger et appliquer des règles factices  
+  - génération d’issues fictives pour tester l’UI  
+- `include/ui.h`  
+  - déclaration des fonctions UI partagées  
+- `include/rules.h`  
+  - définition des structures `Rule`, `RuleIssue`, `RuleReport` et API de règles
 
-## Ce que j'ai fait
-
-1. J'ai nettoyé `src/ui/main_window.c` pour supprimer les définitions en double qui causaient des erreurs de compilation.
-2. J'ai ajouté un header `include/ui.h` pour déclarer `create_main_window()` et `create_rules_panel()`.
-3. J'ai corrigé l'intégration du panneau de règles avec `create_rules_panel()`.
-4. J'ai vérifié que l'UI compile correctement.
+## Ce que j’ai fait
+1. Nettoyage de `src/ui/main_window.c` pour supprimer les doublons et corriger la compilation.  
+2. Ajout du header `include/ui.h` pour déclarer `create_main_window()` et `create_rules_panel()`.  
+3. Intégration du panneau de règles avec `create_rules_panel()` et mise à jour via `rules_panel_update_from_report()`.  
+4. Ajout des fonctionnalités **zoom limité (50–100)**, **marges type Word**, **sauts de page**, **basculer thème clair/sombre**.  
+5. Création d’un **stub de règles** (`rules_stub.c`) qui génère des issues factices pour tester l’UI.  
+6. Vérification que l’UI compile et que le panneau affiche correctement les issues.  
 
 ## Commande de test
 
-Pour tester uniquement la partie interface utilisateur, utiliser :
+Pour tester uniquement la partie interface utilisateur :
 
 ```bash
 cd /home/calebkindji/IntelliEditor
-gcc -Iinclude src/main.c src/ui/main_window.c src/ui/rules_panel.c src/utils/rules_stub.c -o text $(pkg-config --cflags --libs gtk+-3.0)
-```
-
-### Notes pour l'équipe
-- Cette commande teste la partie UI sans dépendre de `cJSON` ou des fichiers de règles complets.
-- Si GTK 3 n'est pas installé sur le système, installez-le d'abord (`gtk+-3.0` / `gtk3-devel`).
-- Le binaire généré est `text`.
-
-## Résultat attendu
-
-- la compilation doit se terminer sans erreur
-- un exécutable `text` doit apparaître à la racine du projet
-- l'application doit pouvoir démarrer et afficher la fenêtre principale
+cd /home/calebkindji/IntelliEditor
+gcc -Iinclude src/main.c src/ui/main_window.c src/ui/rules_panel.c src/utils/rules_stub.c -o text $(pkg-config --cflags --libs gtk+-3.0) -lm

@@ -34,13 +34,10 @@ target_link_libraries(intelli_engine
     ${GTK3_LIBRARIES} 
     ${CJSON_LIBRARIES} 
     ${PCRE2_LIB}
-    m
 )
-
 
 # 8. Section pour les tests unitaires (CMocka)
 if(CMOCKA_LIB)
     add_executable(unit_tests tests/test_rules_cmocka.c ${RULES_SRC})
-target_link_libraries(unit_tests ${CMOCKA_LIB} ${PCRE2_LIB} ${CJSON_LIBRARIES} m)
-
+    target_link_libraries(unit_tests ${CMOCKA_LIB} ${PCRE2_LIB} ${CJSON_LIBRARIES})
 endif()

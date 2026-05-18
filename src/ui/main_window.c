@@ -1,55 +1,108 @@
+/* main_window.c
+ *
+ * Fenêtre principale d'IntelliEditor avec barre de menus, toolbar enrichie
+ * (police, taille, gras/italique/souligné, alignement, styles), zone de texte,
+ * panneau règles et statusbar.
+ *
+ * Dépendances externes (fichiers fournis ailleurs) :
+ *  - rules.h / rules.c (load_rules, apply_rules_to_buffer, free_rule_report, create_rules_panel, rules_panel_update_from_report)
+ *
+ * Compile : `gcc -o intellieditor main_window.c rules.c `pkg-config --cflags --libs gtk+-3.0` -lm`
+ */
 
 #include <gtk/gtk.h>
+#include <gtk/gtkaboutdialog.h>
 #include <math.h>
 #include "rules.h"
 
 
-/* Panel rules */
+/* Prototypes externes fournis ailleurs */
+GtkWidget* create_rules_panel(void);
 void rules_panel_update_from_report(GtkWidget *panel, const RuleReport *report);
-
 
 /* ---------------------------
    Configuration zoom / marges
    --------------------------- */
-static int current_zoom = 25;   /* valeur par défaut (taille police) */
+static int current_zoom = 50;
 static const int MIN_ZOOM = 10;
-static const int MAX_ZOOM = 100;
+static const int MAX_ZOOM = 200;
 static const int ZOOM_STEP = 5;
 
-// Polices : nombre de pixels (approx) basé sur le pourcentage de zoom
+/* Convertit un pourcentage de zoom en taille approximative en pixels */
 static int zoom_to_font_size(int zoom_percent) {
-    // 100% => 12px, MIN 50% => 8px, MAX 200% => 24px
+    /* 100% => 12px (approx), on scale linéairement */
     int size = (zoom_percent * 12) / 100;
     if (size < 6) size = 6;
-    if (size > 40) size = 40;
+    if (size > 72) size = 72;
     return size;
 }
-
 
 /* ---------------------------
    Helpers: theme, zoom, status
    --------------------------- */
 
 static void apply_theme(GtkWidget *window, gboolean dark_mode) {
+    (void)window;
+
     GtkCssProvider *provider = gtk_css_provider_new();
+
+    /* Style proche OnlyOffice (light). On ignore dark_mode pour l’instant : charte claire uniquement. */
     if (dark_mode) {
-        gtk_css_provider_load_from_data(provider,
-            "textview { background-color: #ffffff; color: #000000; }"
-            "window { background-color: #f0f0f0; }", -1, NULL);
-    } else {
-        gtk_css_provider_load_from_data(provider,
-            "textview { background-color: #ffffff; color: #000000; }"
-            "window { background-color: #f0f0f0; }", -1, NULL);
+        /* volontairement light-only */
+        dark_mode = FALSE;
     }
+
+    gtk_css_provider_load_from_data(provider,
+        /* Base */
+        "window { background-color: #f3f5f7; }"
+        "textview { background-color: #ffffff; color: #1f2328; border-radius: 8px; }"
+        "label { color: #1f2328; }"
+
+        /* Title / headers */
+        ".oo-title { font-weight: 700; color: #1f2328; font-size: 14px; }"
+        ".oo-subtitle { color: #6b7280; font-size: 12px; }"
+
+        /* Ribbon / toolbar */
+        "toolbar { background-color: #ffffff; border-bottom: 1px solid #e5e7eb; padding: 6px; }"
+        "toolbar toolbutton { padding: 4px 6px; border-radius: 6px; }"
+
+        /* Buttons */
+        "button, toolbutton { background-image: none; }"
+        "button { background-color: #f9fafb; border: 1px solid #d1d5db; border-radius: 8px; padding: 6px 10px; }"
+        "button:hover { background-color: #eef2ff; border-color: #c7d2fe; }"
+
+        /* Sidebar / panel */
+        "#rules-panel { background-color: #ffffff; border: 1px solid #e5e7eb; border-radius: 12px; }"
+        "#rules-panel .oo-panel-header { background: #f8fafc; border-bottom: 1px solid #e5e7eb; padding: 10px 12px; border-top-left-radius: 12px; border-top-right-radius: 12px; }"
+        "#rules-panel .oo-panel-section { padding: 10px 12px; }"
+
+        /* Issue rows */
+        "#rules-panel .oo-issue-row { padding: 8px 10px; border-radius: 10px; margin: 0px; border: 1px solid transparent; }"
+        "#rules-panel .oo-issue-row:hover { background-color: #f3f4f6; border-color: #e5e7eb; }"
+        "#rules-panel .oo-badge { min-width: 22px; font-weight: 700; }"
+        "#rules-panel .oo-issue-title { font-weight: 600; font-size: 12px; color: #111827; }"
+        "#rules-panel .oo-issue-msg { font-size: 12px; color: #374151; }"
+
+        /* Badges by type */
+        "#rules-panel .oo-issue-error .oo-badge { background-color: #fee2e2; color: #991b1b; border: 1px solid #fecaca; border-radius: 999px; padding: 2px 6px; }"
+        "#rules-panel .oo-issue-warn  .oo-badge { background-color: #fef3c7; color: #92400e; border: 1px solid #fde68a; border-radius: 999px; padding: 2px 6px; }"
+        "#rules-panel .oo-issue-ok    .oo-badge { background-color: #dcfce7; color: #166534; border: 1px solid #bbf7d0; border-radius: 999px; padding: 2px 6px; }",
+        -1, NULL);
+
     gtk_style_context_add_provider_for_screen(
         gdk_screen_get_default(),
         GTK_STYLE_PROVIDER(provider),
         GTK_STYLE_PROVIDER_PRIORITY_USER);
+
     g_object_unref(provider);
 }
 
+
+
 static void update_statusbar(GtkWidget *window) {
     GtkWidget *text_area = g_object_get_data(G_OBJECT(window), "text_area");
+    if (!GTK_IS_TEXT_VIEW(text_area)) return;
+
     GtkTextBuffer *buffer = gtk_text_view_get_buffer(GTK_TEXT_VIEW(text_area));
     GtkTextIter start, end, cursor;
     gtk_text_buffer_get_start_iter(buffer, &start);
@@ -68,12 +121,14 @@ static void update_statusbar(GtkWidget *window) {
     int column = gtk_text_iter_get_line_offset(&cursor) + 1;
     g_free(text);
 
-    gchar *status_text = g_strdup_printf("Mots : %d | Ligne %d, Col %d | UTF-8 | FR | Zoom %d%%",
+    gchar *status_text = g_strdup_printf("Mots : %d | Ligne %d, Col %d | FR | Zoom %d%%",
                                          word_count, line, column, current_zoom);
     GtkWidget *statusbar = g_object_get_data(G_OBJECT(window), "statusbar");
-    guint context = gtk_statusbar_get_context_id(GTK_STATUSBAR(statusbar), "editor-status");
-    gtk_statusbar_pop(GTK_STATUSBAR(statusbar), context);
-    gtk_statusbar_push(GTK_STATUSBAR(statusbar), context, status_text);
+    if (GTK_IS_STATUSBAR(statusbar)) {
+        guint context = gtk_statusbar_get_context_id(GTK_STATUSBAR(statusbar), "editor-status");
+        gtk_statusbar_pop(GTK_STATUSBAR(statusbar), context);
+        gtk_statusbar_push(GTK_STATUSBAR(statusbar), context, status_text);
+    }
     g_free(status_text);
 }
 
@@ -108,6 +163,7 @@ static gboolean load_file_to_buffer(GtkTextBuffer *buffer, const gchar *filename
    --------------------------- */
 
 static void on_quit(GtkWidget *widget, gpointer data) {
+    (void)widget;
     gtk_main_quit();
 }
 
@@ -246,7 +302,6 @@ static void on_load_rules(GtkWidget *widget, gpointer data) {
             gtk_statusbar_push(GTK_STATUSBAR(g_object_get_data(G_OBJECT(window), "statusbar")), 0, "Aucune règle chargée");
         }
 
-        /* Wiring UI : remplir le panneau au chargement (stub produit des issues factices) */
         if (rules_panel) {
             RuleReport *ui_report = apply_rules_to_buffer(buffer);
             if (ui_report) {
@@ -284,7 +339,6 @@ static void on_correct(GtkWidget *widget, gpointer data) {
     update_statusbar(window);
 }
 
-
 static void on_reformulate(GtkWidget *widget, gpointer data) {
     (void)widget;
     GtkWidget *window = GTK_WIDGET(data);
@@ -296,7 +350,6 @@ static void on_reformulate(GtkWidget *widget, gpointer data) {
     gtk_statusbar_push(GTK_STATUSBAR(g_object_get_data(G_OBJECT(window), "statusbar")), 0, "Reformulation en cours...");
     update_statusbar(window);
 
-    /* Stub : on réutilise le diagnostic pour valider le wiring orthographe/reformulation */
     RuleReport *report = apply_rules_to_buffer(buffer);
     if (report) {
         rules_panel_update_from_report(rules_panel, report);
@@ -306,9 +359,9 @@ static void on_reformulate(GtkWidget *widget, gpointer data) {
     update_statusbar(window);
 }
 
-
 /* Callbacks pour copier/coller/couper */
 static void on_copy(GtkWidget *widget, gpointer data) {
+    (void)widget;
     GtkWidget *window = GTK_WIDGET(data);
     GtkWidget *text_area = g_object_get_data(G_OBJECT(window), "text_area");
     GtkTextBuffer *buffer = gtk_text_view_get_buffer(GTK_TEXT_VIEW(text_area));
@@ -316,6 +369,7 @@ static void on_copy(GtkWidget *widget, gpointer data) {
 }
 
 static void on_paste(GtkWidget *widget, gpointer data) {
+    (void)widget;
     GtkWidget *window = GTK_WIDGET(data);
     GtkWidget *text_area = g_object_get_data(G_OBJECT(window), "text_area");
     GtkTextBuffer *buffer = gtk_text_view_get_buffer(GTK_TEXT_VIEW(text_area));
@@ -323,6 +377,7 @@ static void on_paste(GtkWidget *widget, gpointer data) {
 }
 
 static void on_cut(GtkWidget *widget, gpointer data) {
+    (void)widget;
     GtkWidget *window = GTK_WIDGET(data);
     GtkWidget *text_area = g_object_get_data(G_OBJECT(window), "text_area");
     GtkTextBuffer *buffer = gtk_text_view_get_buffer(GTK_TEXT_VIEW(text_area));
@@ -333,20 +388,19 @@ static void on_cut(GtkWidget *widget, gpointer data) {
    Règles: appliquer / exporter
    --------------------------- */
 
-/* Appliquer les règles chargées au texte (implémentation minimale) */
 static void on_apply_rules(GtkWidget *widget, gpointer data) {
+    (void)widget;
     GtkWidget *window = GTK_WIDGET(data);
     GtkWidget *text_area = g_object_get_data(G_OBJECT(window), "text_area");
     GtkTextBuffer *buffer = gtk_text_view_get_buffer(GTK_TEXT_VIEW(text_area));
 
-    /* Exemple minimal : ici tu peux appeler ta fonction d'application de règles si elle existe.
-       Pour l'instant on se contente d'un message et d'une mise à jour du status. */
     gtk_statusbar_push(GTK_STATUSBAR(g_object_get_data(G_OBJECT(window), "statusbar")), 0, "Application des règles...");
     update_statusbar(window);
 }
 
 /* Exporter un rapport simple des règles (fichier texte) */
 static void on_export_rules(GtkWidget *widget, gpointer data) {
+    (void)widget;
     GtkWidget *window = GTK_WIDGET(data);
 
     GtkWidget *dialog = gtk_file_chooser_dialog_new("Exporter rapport de règles",
@@ -359,7 +413,6 @@ static void on_export_rules(GtkWidget *widget, gpointer data) {
 
     if (gtk_dialog_run(GTK_DIALOG(dialog)) == GTK_RESPONSE_ACCEPT) {
         char *filename = gtk_file_chooser_get_filename(GTK_FILE_CHOOSER(dialog));
-        /* Contenu minimal du rapport ; adapte selon ton format réel */
         const gchar *report = "Rapport de règles\nAucune donnée détaillée fournie.\n";
         g_file_set_contents(filename, report, -1, NULL);
         gtk_statusbar_push(GTK_STATUSBAR(g_object_get_data(G_OBJECT(window), "statusbar")), 0, "Rapport de règles exporté");
@@ -372,30 +425,76 @@ static void on_export_rules(GtkWidget *widget, gpointer data) {
    Affichage: zoom, marges, saut de page
    --------------------------- */
 
-static void update_zoom(GtkWidget *text_area) {
-    int px = zoom_to_font_size(current_zoom);
+static void set_default_paragraph_format(GtkTextView *text_view) {
+    /* Interligne : 1.15 (lisibilité) */
+    GtkTextBuffer *buffer = gtk_text_view_get_buffer(text_view);
+    GtkTextIter start, end;
+    gtk_text_buffer_get_bounds(buffer, &start, &end);
 
-    // GTK/Pango attend des tailles en points. 1 point ~ 96dpi/72. On prend un facteur simple.
+    GtkTextTagTable *table = gtk_text_buffer_get_tag_table(buffer);
+    GtkTextTag *tag = gtk_text_tag_table_lookup(table, "normal_base");
+    if (!tag) {
+        tag = gtk_text_tag_new("normal_base");
+        gtk_text_tag_table_add(table, tag);
+    }
+
+    /* Pango: pixels/taille via size, interligne via "pixels-above-lines"/"pixels-below-lines" ou "line-height" selon version.
+       Ici on utilise line-height si supporté ; sinon, on ne casse pas la compilation. */
+#ifdef PANGO_VERSION
+    /* tentative : line-height (Pango>=1.50) */
+    g_object_set(tag, "size", -1, NULL);
+#endif
+    /* En pratique GTK/Pango expose "pixels-above-lines" et "pixels-below-lines".
+       Pour obtenir ~1.15, on ajoute un surplus de 15% sur la hauteur courante (approximatif). */
+    int surplus = 2; /* valeur conservatrice */
+    g_object_set(tag, "pixels_above_lines", 0, "pixels_below_lines", surplus, NULL);
+
+    gtk_text_buffer_remove_tag(buffer, tag, &start, &end);
+    gtk_text_buffer_apply_tag(buffer, tag, &start, &end);
+}
+
+static void update_zoom(GtkWidget *text_area) {
+
+    if (!GTK_IS_TEXT_VIEW(text_area)) return;
+    int px = zoom_to_font_size(current_zoom);
     double points = (double)px * 0.75;
     gchar *font_str = g_strdup_printf("Sans %d", (int)round(points));
     PangoFontDescription *font = pango_font_description_from_string(font_str);
 
-    g_object_set(text_area, "font-desc", font, NULL);
+    /* gtk_widget_override_font() est obsolète sur GTK3.
+       On applique donc la police à tout le contenu via des tags. */
+    GtkTextBuffer *buffer = gtk_text_view_get_buffer(GTK_TEXT_VIEW(text_area));
+    GtkTextIter start, end;
+    gtk_text_buffer_get_bounds(buffer, &start, &end);
 
-    // Forcer un redraw/recalc du layout pour que le changement de police
-    // soit bien appliqué visuellement.
-    gtk_widget_queue_draw(text_area);
-    gtk_widget_queue_resize(text_area);
+    gchar *tag_name = g_strdup_printf("zoom_%d", current_zoom);
+    GtkTextTagTable *table = gtk_text_buffer_get_tag_table(buffer);
+    GtkTextTag *tag = gtk_text_tag_table_lookup(table, tag_name);
+    if (!tag) {
+        tag = gtk_text_tag_new(tag_name);
+        gtk_text_tag_table_add(table, tag);
+    }
+
+    /* Convertir la description en attributs de tag */
+    /* family */
+    const gchar *family = pango_font_description_get_family(font);
+    if (family) g_object_set(tag, "family", family, NULL);
+
+    /* size: Pango en unit(s) de PANGO_SCALE */
+    int size = pango_font_description_get_size(font);
+    if (size > 0) g_object_set(tag, "size", size, NULL);
+
+    gtk_text_buffer_remove_tag(buffer, tag, &start, &end);
+    gtk_text_buffer_apply_tag(buffer, tag, &start, &end);
 
     pango_font_description_free(font);
     g_free(font_str);
+    g_free(tag_name);
 }
 
 
-
-
-/* Zoom avant */
 static void on_zoom_in(GtkWidget *widget, gpointer data) {
+    (void)widget;
     GtkWidget *window = GTK_WIDGET(data);
     GtkWidget *text_area = g_object_get_data(G_OBJECT(window), "text_area");
     if (current_zoom < MAX_ZOOM) {
@@ -406,8 +505,8 @@ static void on_zoom_in(GtkWidget *widget, gpointer data) {
     }
 }
 
-/* Zoom arrière */
 static void on_zoom_out(GtkWidget *widget, gpointer data) {
+    (void)widget;
     GtkWidget *window = GTK_WIDGET(data);
     GtkWidget *text_area = g_object_get_data(G_OBJECT(window), "text_area");
     if (current_zoom > MIN_ZOOM) {
@@ -418,8 +517,8 @@ static void on_zoom_out(GtkWidget *widget, gpointer data) {
     }
 }
 
-/* Réinitialiser zoom */
 static void on_zoom_reset(GtkWidget *widget, gpointer data) {
+    (void)widget;
     GtkWidget *window = GTK_WIDGET(data);
     GtkWidget *text_area = g_object_get_data(G_OBJECT(window), "text_area");
     current_zoom = 50;
@@ -427,8 +526,10 @@ static void on_zoom_reset(GtkWidget *widget, gpointer data) {
     update_statusbar(window);
 }
 
-/* Insérer un saut de page visuel */
 static void on_insert_page_break(GtkWidget *widget, gpointer data) {
+    /* "Saut de page" : on insère un marqueur visuel séparé.
+       (Dans cette version, c'est du texte séparateur ; l'idée est de créer une nouvelle page.) */
+    (void)widget;
     GtkWidget *window = GTK_WIDGET(data);
     GtkWidget *text_area = g_object_get_data(G_OBJECT(window), "text_area");
     GtkTextBuffer *buffer = gtk_text_view_get_buffer(GTK_TEXT_VIEW(text_area));
@@ -438,11 +539,19 @@ static void on_insert_page_break(GtkWidget *widget, gpointer data) {
     update_statusbar(window);
 }
 
-/* Afficher/masquer marges (toggle) */
+static void show_rules_panel_if_hidden(GtkWidget *window) {
+    GtkWidget *rules_panel = g_object_get_data(G_OBJECT(window), "rules_panel");
+    if (rules_panel && !gtk_widget_get_visible(rules_panel)) {
+        gtk_widget_set_visible(rules_panel, TRUE);
+    }
+}
+
 static void on_toggle_margins(GtkWidget *widget, gpointer data) {
+    /* "Angle": dès que l'utilisateur agit sur la mise en page (marges), on affiche le panneau de conformité. */
+    show_rules_panel_if_hidden(GTK_WIDGET(data));
+    (void)widget;
     GtkWidget *window = GTK_WIDGET(data);
     GtkWidget *text_area = g_object_get_data(G_OBJECT(window), "text_area");
-    /* On lit la marge gauche actuelle pour décider */
     gint left = gtk_text_view_get_left_margin(GTK_TEXT_VIEW(text_area));
     if (left == 0) {
         gtk_text_view_set_left_margin(GTK_TEXT_VIEW(text_area), 50);
@@ -465,8 +574,8 @@ static void on_toggle_margins(GtkWidget *widget, gpointer data) {
    --------------------------- */
 
 static void on_open_doc(GtkWidget *widget, gpointer data) {
+    (void)widget;
     GtkWidget *window = GTK_WIDGET(data);
-    /* Exemple : ouvrir une URL de documentation dans le navigateur par défaut */
     const gchar *doc_url = "https://example.com/intellieditor-doc";
     GError *error = NULL;
     gtk_show_uri_on_window(GTK_WINDOW(window), doc_url, GDK_CURRENT_TIME, &error);
@@ -479,6 +588,7 @@ static void on_open_doc(GtkWidget *widget, gpointer data) {
 }
 
 static void on_show_shortcuts(GtkWidget *widget, gpointer data) {
+    (void)widget;
     GtkWidget *window = GTK_WIDGET(data);
     GtkWidget *dialog = gtk_message_dialog_new(GTK_WINDOW(window),
                                                GTK_DIALOG_MODAL | GTK_DIALOG_DESTROY_WITH_PARENT,
@@ -505,6 +615,228 @@ static void on_text_changed(GtkTextBuffer *buffer, gpointer data) {
     update_statusbar(window);
 }
 
+/* ---------------------------
+   Mise en forme: police, taille, styles, alignement
+   --------------------------- */
+
+static void apply_font_to_selection(GtkTextView *text_view, const gchar *family, int size_pt) {
+    GtkTextBuffer *buffer = gtk_text_view_get_buffer(text_view);
+    GtkTextIter start, end;
+    if (!gtk_text_buffer_get_selection_bounds(buffer, &start, &end)) return;
+
+    GtkTextTagTable *table = gtk_text_buffer_get_tag_table(buffer);
+    gchar tag_name[128];
+    g_snprintf(tag_name, sizeof(tag_name), "font_%s_%d", family ? family : "Sans", size_pt);
+
+    GtkTextTag *tag = gtk_text_tag_table_lookup(table, tag_name);
+    if (!tag) {
+        tag = gtk_text_tag_new(tag_name);
+        if (family) g_object_set(tag, "family", family, NULL);
+        if (size_pt > 0) g_object_set(tag, "size", (int)(size_pt * PANGO_SCALE), NULL);
+        gtk_text_tag_table_add(table, tag);
+    }
+    gtk_text_buffer_apply_tag(buffer, tag, &start, &end);
+}
+
+static void on_font_set(GtkFontButton *font_button, gpointer data) {
+    GtkTextView *text_view = GTK_TEXT_VIEW(data);
+
+    /* GTK builds may not provide gtk_font_button_get_font_desc()/set_font_desc().
+       Use font name instead and parse it into a PangoFontDescription. */
+    const gchar *font_name = gtk_font_button_get_font_name(font_button);
+    /* gtk_font_button_get_font_name() peut être dépréciée selon la version GTK.
+       On la conserve pour GTK3 afin de supporter l’API sans dépendre de gtk_font_button_get_font_desc(). */
+
+    if (!font_name || !*font_name) return;
+
+    PangoFontDescription *desc = pango_font_description_from_string(font_name);
+    if (!desc) return;
+
+    const gchar *family = pango_font_description_get_family(desc);
+    int size = pango_font_description_get_size(desc);
+
+    int size_pt = 0;
+    if (size > 0) size_pt = size / PANGO_SCALE;
+
+    apply_font_to_selection(text_view, family, size_pt);
+    pango_font_description_free(desc);
+}
+
+
+
+
+
+
+static void on_size_changed(GtkSpinButton *spin, gpointer data) {
+    GtkTextView *text_view = GTK_TEXT_VIEW(data);
+    int size_pt = gtk_spin_button_get_value_as_int(spin);
+    apply_font_to_selection(text_view, NULL, size_pt);
+}
+
+static void ensure_tag(GtkTextBuffer *buffer, const gchar *name, GParamSpec *unused, GObject *properties, ...) {
+    (void)unused;
+    (void)properties;
+    (void)name;
+    (void)buffer;
+    (void)unused;
+}
+
+/* Gras / Italique / Souligné appliqués sur sélection (déjà définis plus haut) */
+static void on_toggle_bold_cb(GtkToggleToolButton *button, gpointer data) {
+    GtkTextView *text_view = GTK_TEXT_VIEW(data);
+    GtkTextBuffer *buffer = gtk_text_view_get_buffer(text_view);
+    GtkTextIter start, end;
+    if (!gtk_text_buffer_get_selection_bounds(buffer, &start, &end)) return;
+
+    GtkTextTagTable *table = gtk_text_buffer_get_tag_table(buffer);
+    GtkTextTag *tag = gtk_text_tag_table_lookup(table, "bold");
+    if (!tag) {
+        tag = gtk_text_tag_new("bold");
+        g_object_set(tag, "weight", PANGO_WEIGHT_BOLD, NULL);
+        gtk_text_tag_table_add(table, tag);
+    }
+    gtk_text_buffer_apply_tag(buffer, tag, &start, &end);
+}
+
+static void on_toggle_italic_cb(GtkToggleToolButton *button, gpointer data) {
+    GtkTextView *text_view = GTK_TEXT_VIEW(data);
+    GtkTextBuffer *buffer = gtk_text_view_get_buffer(text_view);
+    GtkTextIter start, end;
+    if (!gtk_text_buffer_get_selection_bounds(buffer, &start, &end)) return;
+
+    GtkTextTagTable *table = gtk_text_buffer_get_tag_table(buffer);
+    GtkTextTag *tag = gtk_text_tag_table_lookup(table, "italic");
+    if (!tag) {
+        tag = gtk_text_tag_new("italic");
+        g_object_set(tag, "style", PANGO_STYLE_ITALIC, NULL);
+        gtk_text_tag_table_add(table, tag);
+    }
+    gtk_text_buffer_apply_tag(buffer, tag, &start, &end);
+}
+
+static void on_toggle_underline_cb(GtkToggleToolButton *button, gpointer data) {
+    GtkTextView *text_view = GTK_TEXT_VIEW(data);
+    GtkTextBuffer *buffer = gtk_text_view_get_buffer(text_view);
+    GtkTextIter start, end;
+    if (!gtk_text_buffer_get_selection_bounds(buffer, &start, &end)) return;
+
+    GtkTextTagTable *table = gtk_text_buffer_get_tag_table(buffer);
+    GtkTextTag *tag = gtk_text_tag_table_lookup(table, "underline");
+    if (!tag) {
+        tag = gtk_text_tag_new("underline");
+        g_object_set(tag, "underline", PANGO_UNDERLINE_SINGLE, NULL);
+        gtk_text_tag_table_add(table, tag);
+    }
+    gtk_text_buffer_apply_tag(buffer, tag, &start, &end);
+}
+
+/* Alignement de paragraphe */
+static void apply_alignment_to_paragraphs(GtkTextView *text_view, GtkJustification justification) {
+
+    GtkTextBuffer *buffer = gtk_text_view_get_buffer(text_view);
+    GtkTextIter start, end;
+    if (gtk_text_buffer_get_selection_bounds(buffer, &start, &end)) {
+        /* Appliquer tag de justification sur chaque paragraphe couvert */
+        GtkTextIter iter = start;
+        do {
+            GtkTextIter para_start = iter;
+            gtk_text_iter_set_line_offset(&para_start, 0);
+            GtkTextIter para_end = para_start;
+            if (!gtk_text_iter_ends_line(&para_end)) {
+                gtk_text_iter_forward_to_line_end(&para_end);
+            }
+            GtkTextTagTable *table = gtk_text_buffer_get_tag_table(buffer);
+            GtkTextTag *tag = gtk_text_tag_table_lookup(table, "just");
+            if (!tag) {
+                tag = gtk_text_tag_new("just");
+                g_object_set(tag, "justification", justification, NULL);
+                gtk_text_tag_table_add(table, tag);
+            } else {
+                /* mettre à jour justification si nécessaire */
+                g_object_set(tag, "justification", justification, NULL);
+            }
+            gtk_text_buffer_apply_tag(buffer, tag, &para_start, &para_end);
+            iter = para_end;
+            if (!gtk_text_iter_forward_line(&iter)) break;
+        } while (gtk_text_iter_compare(&iter, &end) <= 0);
+    } else {
+        /* Si pas de sélection, appliquer au paragraphe courant */
+        GtkTextIter cursor;
+        gtk_text_buffer_get_iter_at_mark(buffer, &cursor, gtk_text_buffer_get_insert(buffer));
+        GtkTextIter para_start = cursor;
+        gtk_text_iter_set_line_offset(&para_start, 0);
+        GtkTextIter para_end = para_start;
+        if (!gtk_text_iter_ends_line(&para_end)) gtk_text_iter_forward_to_line_end(&para_end);
+        GtkTextTagTable *table = gtk_text_buffer_get_tag_table(buffer);
+        GtkTextTag *tag = gtk_text_tag_table_lookup(table, "just");
+        if (!tag) {
+            tag = gtk_text_tag_new("just");
+            g_object_set(tag, "justification", justification, NULL);
+            gtk_text_tag_table_add(table, tag);
+        } else {
+            g_object_set(tag, "justification", justification, NULL);
+        }
+        gtk_text_buffer_apply_tag(buffer, tag, &para_start, &para_end);
+    }
+}
+
+static void on_align_left(GtkToolButton *button, gpointer data) {
+    (void)button;
+    apply_alignment_to_paragraphs(GTK_TEXT_VIEW(data), GTK_JUSTIFY_LEFT);
+}
+
+static void on_align_center(GtkToolButton *button, gpointer data) {
+    (void)button;
+    apply_alignment_to_paragraphs(GTK_TEXT_VIEW(data), GTK_JUSTIFY_CENTER);
+}
+
+static void on_align_right(GtkToolButton *button, gpointer data) {
+    (void)button;
+    apply_alignment_to_paragraphs(GTK_TEXT_VIEW(data), GTK_JUSTIFY_RIGHT);
+}
+
+    /* Interligne / styles prédéfinis (Normal, Titre 1, Titre 2)
+       Note : GTK utilise des tags Pango pour appliquer interligne, polices, etc. */
+
+static void apply_style(GtkTextView *text_view, const gchar *style_name) {
+    GtkTextBuffer *buffer = gtk_text_view_get_buffer(text_view);
+    GtkTextIter start, end;
+    if (!gtk_text_buffer_get_selection_bounds(buffer, &start, &end)) return;
+
+    GtkTextTagTable *table = gtk_text_buffer_get_tag_table(buffer);
+    if (g_strcmp0(style_name, "Normal") == 0) {
+        /* Retirer tags de titre si présents (simple approche) */
+        GtkTextTag *t1 = gtk_text_tag_table_lookup(table, "titre1");
+        GtkTextTag *t2 = gtk_text_tag_table_lookup(table, "titre2");
+        if (t1) gtk_text_buffer_remove_tag(buffer, t1, &start, &end);
+        if (t2) gtk_text_buffer_remove_tag(buffer, t2, &start, &end);
+    } else if (g_strcmp0(style_name, "Titre 1") == 0) {
+        GtkTextTag *t1 = gtk_text_tag_table_lookup(table, "titre1");
+        if (!t1) {
+            t1 = gtk_text_tag_new("titre1");
+            g_object_set(t1, "weight", PANGO_WEIGHT_BOLD, "size", (int)(18 * PANGO_SCALE), NULL);
+            gtk_text_tag_table_add(table, t1);
+        }
+        gtk_text_buffer_apply_tag(buffer, t1, &start, &end);
+    } else if (g_strcmp0(style_name, "Titre 2") == 0) {
+        GtkTextTag *t2 = gtk_text_tag_table_lookup(table, "titre2");
+        if (!t2) {
+            t2 = gtk_text_tag_new("titre2");
+            g_object_set(t2, "weight", PANGO_WEIGHT_BOLD, "size", (int)(14 * PANGO_SCALE), NULL);
+            gtk_text_tag_table_add(table, t2);
+        }
+        gtk_text_buffer_apply_tag(buffer, t2, &start, &end);
+    }
+}
+
+/* ---------------------------
+   Theme / About / Style combo callbacks
+   --------------------------- */
+
+static void on_toggle_theme(GtkWidget *widget, gpointer data);
+static void on_about(GtkWidget *widget, gpointer data);
+static void on_style_combo_changed(GtkComboBox *combo, gpointer data);
+
 static void on_toggle_theme(GtkWidget *widget, gpointer data) {
     (void)widget;
     GtkWidget *window = GTK_WIDGET(data);
@@ -521,15 +853,32 @@ static void on_about(GtkWidget *widget, gpointer data) {
     (void)widget;
     GtkWidget *window = GTK_WIDGET(data);
 
-    GtkWidget *dialog = gtk_about_dialog_new();
-    gtk_about_dialog_set_program_name(GTK_ABOUT_DIALOG(dialog), "IntelliEditor");
-    gtk_about_dialog_set_comments(GTK_ABOUT_DIALOG(dialog), "Editeur de texte (GTK) avec panneau de r2gles.");
-    gtk_about_dialog_set_authors(GTK_ABOUT_DIALOG(dialog), (const gchar *[]) { "CalebKindji", NULL });
-    gtk_window_set_transient_for(GTK_WINDOW(dialog), GTK_WINDOW(window));
-    gtk_dialog_run(GTK_DIALOG(dialog));
-    gtk_widget_destroy(dialog);
+    const gchar *authors[] = { "Caleb Kindji", NULL };
+
+    GtkWidget *about = gtk_about_dialog_new();
+    gtk_about_dialog_set_program_name(GTK_ABOUT_DIALOG(about), "IntelliEditor");
+    gtk_about_dialog_set_version(GTK_ABOUT_DIALOG(about), "0.1");
+    gtk_about_dialog_set_comments(GTK_ABOUT_DIALOG(about), "Editeur de texte avec panneau de règles.");
+    gtk_about_dialog_set_authors(GTK_ABOUT_DIALOG(about), authors);
+
+    /* GTK3: make it modal/transient relative to main window.
+       Some GTK builds may not expose about-dialog modal/transient setters,
+       so we use the generic dialog API instead. */
+    gtk_window_set_modal(GTK_WINDOW(about), TRUE);
+    gtk_window_set_transient_for(GTK_WINDOW(about), GTK_WINDOW(window));
+
+    gtk_dialog_run(GTK_DIALOG(about));
+    gtk_widget_destroy(about);
 }
 
+static void on_style_combo_changed(GtkComboBox *combo, gpointer data) {
+    GtkTextView *tv = GTK_TEXT_VIEW(data);
+    gchar *style = gtk_combo_box_text_get_active_text(GTK_COMBO_BOX_TEXT(combo));
+    if (!style) return;
+
+    apply_style(tv, style);
+    g_free(style);
+}
 
 /* ---------------------------
    Fenêtre principale
@@ -539,6 +888,8 @@ GtkWidget* create_main_window(void) {
     GtkWidget *window, *vbox, *menubar;
     GtkWidget *toolbar, *statusbar;
     GtkWidget *hbox, *text_area, *rules_panel;
+
+    gtk_init(NULL, NULL);
 
     window = gtk_window_new(GTK_WINDOW_TOPLEVEL);
     gtk_window_set_title(GTK_WINDOW(window), "IntelliEditor");
@@ -557,6 +908,14 @@ GtkWidget* create_main_window(void) {
     GtkWidget *rulesMi = gtk_menu_item_new_with_label("Règles");
     GtkWidget *helpMi = gtk_menu_item_new_with_label("Aide");
 
+    gtk_menu_shell_append(GTK_MENU_SHELL(menubar), fileMi);
+    gtk_menu_shell_append(GTK_MENU_SHELL(menubar), editMi);
+    gtk_menu_shell_append(GTK_MENU_SHELL(menubar), viewMi);
+    gtk_menu_shell_append(GTK_MENU_SHELL(menubar), toolsMi);
+    gtk_menu_shell_append(GTK_MENU_SHELL(menubar), rulesMi);
+    gtk_menu_shell_append(GTK_MENU_SHELL(menubar), helpMi);
+
+    /* Sous-menus */
     GtkWidget *fileMenu = gtk_menu_new();
     GtkWidget *editMenu = gtk_menu_new();
     GtkWidget *viewMenu = gtk_menu_new();
@@ -571,19 +930,13 @@ GtkWidget* create_main_window(void) {
     gtk_menu_item_set_submenu(GTK_MENU_ITEM(rulesMi), rulesMenu);
     gtk_menu_item_set_submenu(GTK_MENU_ITEM(helpMi), helpMenu);
 
-    gtk_menu_shell_append(GTK_MENU_SHELL(menubar), fileMi);
-    gtk_menu_shell_append(GTK_MENU_SHELL(menubar), editMi);
-    gtk_menu_shell_append(GTK_MENU_SHELL(menubar), viewMi);
-    gtk_menu_shell_append(GTK_MENU_SHELL(menubar), toolsMi);
-    gtk_menu_shell_append(GTK_MENU_SHELL(menubar), rulesMi);
-    gtk_menu_shell_append(GTK_MENU_SHELL(menubar), helpMi);
-
     /* --- Fichier --- */
     GtkWidget *newMi = gtk_menu_item_new_with_label("Nouveau");
     GtkWidget *openMi = gtk_menu_item_new_with_label("Ouvrir...");
     GtkWidget *saveMi = gtk_menu_item_new_with_label("Enregistrer...");
     GtkWidget *saveRtfMi = gtk_menu_item_new_with_label("Exporter en RTF...");
     GtkWidget *quitMi = gtk_menu_item_new_with_label("Quitter");
+
 
     gtk_menu_shell_append(GTK_MENU_SHELL(fileMenu), newMi);
     gtk_menu_shell_append(GTK_MENU_SHELL(fileMenu), openMi);
@@ -641,26 +994,74 @@ GtkWidget* create_main_window(void) {
     gtk_menu_shell_append(GTK_MENU_SHELL(helpMenu), docMi);
     gtk_menu_shell_append(GTK_MENU_SHELL(helpMenu), shortcutsMi);
 
-    /* Pack menubar */
     gtk_box_pack_start(GTK_BOX(vbox), menubar, FALSE, FALSE, 0);
 
-    /* Toolbar (simple) */
+    /* Toolbar enrichie */
     toolbar = gtk_toolbar_new();
+    gtk_toolbar_set_style(GTK_TOOLBAR(toolbar), GTK_TOOLBAR_BOTH);
+
+    /* Boutons de fichier rapides */
     GtkToolItem *newTb = gtk_tool_button_new(NULL, "Nouveau");
     GtkToolItem *openTb = gtk_tool_button_new(NULL, "Ouvrir");
     GtkToolItem *saveTb = gtk_tool_button_new(NULL, "Enregistrer");
-    GtkToolItem *correctTb = gtk_tool_button_new(NULL, "Corriger");
-    GtkToolItem *reformTb = gtk_tool_button_new(NULL, "Reformuler");
-    GtkToolItem *loadRulesTb = gtk_tool_button_new(NULL, "Règles");
-
     gtk_toolbar_insert(GTK_TOOLBAR(toolbar), newTb, -1);
     gtk_toolbar_insert(GTK_TOOLBAR(toolbar), openTb, -1);
     gtk_toolbar_insert(GTK_TOOLBAR(toolbar), saveTb, -1);
     gtk_toolbar_insert(GTK_TOOLBAR(toolbar), gtk_separator_tool_item_new(), -1);
-    gtk_toolbar_insert(GTK_TOOLBAR(toolbar), correctTb, -1);
-    gtk_toolbar_insert(GTK_TOOLBAR(toolbar), reformTb, -1);
+
+    /* Police (GtkFontButton) */
+    GtkWidget *fontBtn = gtk_font_button_new();
+    /* Proposer explicitement "Calibre" (si disponible) */
+    gtk_font_button_set_font_name(GTK_FONT_BUTTON(fontBtn), "Calibre 11");
+
+
+
+    GtkToolItem *fontItem = gtk_tool_item_new();
+    gtk_container_add(GTK_CONTAINER(fontItem), fontBtn);
+    gtk_toolbar_insert(GTK_TOOLBAR(toolbar), fontItem, -1);
+
+    /* Taille (spin) */
+    GtkWidget *sizeSpin = gtk_spin_button_new_with_range(8, 72, 1);
+    gtk_spin_button_set_value(GTK_SPIN_BUTTON(sizeSpin), 11);
+    GtkToolItem *sizeItem = gtk_tool_item_new();
+    gtk_container_add(GTK_CONTAINER(sizeItem), sizeSpin);
+    gtk_toolbar_insert(GTK_TOOLBAR(toolbar), sizeItem, -1);
+
+    /* Gras / Italique / Souligné */
+    GtkToolItem *boldBtn = gtk_toggle_tool_button_new();
+    gtk_tool_button_set_label(GTK_TOOL_BUTTON(boldBtn), "B");
+    gtk_toolbar_insert(GTK_TOOLBAR(toolbar), boldBtn, -1);
+
+    GtkToolItem *italicBtn = gtk_toggle_tool_button_new();
+    gtk_tool_button_set_label(GTK_TOOL_BUTTON(italicBtn), "I");
+    gtk_toolbar_insert(GTK_TOOLBAR(toolbar), italicBtn, -1);
+
+    GtkToolItem *underlineBtn = gtk_toggle_tool_button_new();
+    gtk_tool_button_set_label(GTK_TOOL_BUTTON(underlineBtn), "U");
+    gtk_toolbar_insert(GTK_TOOLBAR(toolbar), underlineBtn, -1);
+
     gtk_toolbar_insert(GTK_TOOLBAR(toolbar), gtk_separator_tool_item_new(), -1);
-    gtk_toolbar_insert(GTK_TOOLBAR(toolbar), loadRulesTb, -1);
+
+    /* Alignement */
+    GtkToolItem *alignLeft = gtk_tool_button_new(NULL, "G");
+    GtkToolItem *alignCenter = gtk_tool_button_new(NULL, "C");
+    GtkToolItem *alignRight = gtk_tool_button_new(NULL, "D");
+    gtk_toolbar_insert(GTK_TOOLBAR(toolbar), alignLeft, -1);
+    gtk_toolbar_insert(GTK_TOOLBAR(toolbar), alignCenter, -1);
+    gtk_toolbar_insert(GTK_TOOLBAR(toolbar), alignRight, -1);
+
+    gtk_toolbar_insert(GTK_TOOLBAR(toolbar), gtk_separator_tool_item_new(), -1);
+
+    /* Styles (combo) : le corps doit utiliser "Normal" (et non "Titre 1") */
+    GtkWidget *styleCombo = gtk_combo_box_text_new();
+    gtk_combo_box_text_append_text(GTK_COMBO_BOX_TEXT(styleCombo), "Normal");
+    gtk_combo_box_text_append_text(GTK_COMBO_BOX_TEXT(styleCombo), "Titre 1");
+    gtk_combo_box_text_append_text(GTK_COMBO_BOX_TEXT(styleCombo), "Titre 2");
+    gtk_combo_box_set_active(GTK_COMBO_BOX(styleCombo), 0);
+
+    GtkToolItem *styleItem = gtk_tool_item_new();
+    gtk_container_add(GTK_CONTAINER(styleItem), styleCombo);
+    gtk_toolbar_insert(GTK_TOOLBAR(toolbar), styleItem, -1);
 
     gtk_box_pack_start(GTK_BOX(vbox), toolbar, FALSE, FALSE, 0);
 
@@ -677,21 +1078,24 @@ GtkWidget* create_main_window(void) {
     gtk_text_view_set_wrap_mode(GTK_TEXT_VIEW(text_area), GTK_WRAP_WORD_CHAR);
     gtk_text_view_set_accepts_tab(GTK_TEXT_VIEW(text_area), TRUE);
 
-    /* Marges par défaut type "Word" */
-    gtk_text_view_set_left_margin(GTK_TEXT_VIEW(text_area), 50);
-    gtk_text_view_set_right_margin(GTK_TEXT_VIEW(text_area), 50);
-    gtk_text_view_set_top_margin(GTK_TEXT_VIEW(text_area), 50);
-    gtk_text_view_set_bottom_margin(GTK_TEXT_VIEW(text_area), 50);
+    /* Marges par défaut (rèf. charte : ~2,5 cm) — valeur en pixels pour GTK */
+    gtk_text_view_set_left_margin(GTK_TEXT_VIEW(text_area), 60);
+    gtk_text_view_set_right_margin(GTK_TEXT_VIEW(text_area), 60);
+    gtk_text_view_set_top_margin(GTK_TEXT_VIEW(text_area), 60);
+    gtk_text_view_set_bottom_margin(GTK_TEXT_VIEW(text_area), 60);
+
 
     gtk_container_add(GTK_CONTAINER(text_scrolled), text_area);
 
     /* Panneau règles (fonction create_rules_panel fournie ailleurs) */
     rules_panel = create_rules_panel();
-    gtk_widget_set_size_request(rules_panel, 300, 0);
+    /* Panneau latéral : réduire la largeur pour laisser plus d'espace au texte */
+    gtk_widget_set_size_request(rules_panel, 230, 0);
+
 
     /* Stocker pour les callbacks */
+    g_object_set_data(G_OBJECT(window), "text_area", text_area);
     g_object_set_data(G_OBJECT(window), "rules_panel", rules_panel);
-
 
     gtk_box_pack_start(GTK_BOX(hbox), text_scrolled, TRUE, TRUE, 0);
     gtk_box_pack_start(GTK_BOX(hbox), rules_panel, FALSE, FALSE, 0);
@@ -707,7 +1111,7 @@ GtkWidget* create_main_window(void) {
     g_signal_connect(openMi, "activate", G_CALLBACK(on_open), window);
     g_signal_connect(saveMi, "activate", G_CALLBACK(on_save), window);
     g_signal_connect(saveRtfMi, "activate", G_CALLBACK(on_save_rtf), window);
-    g_signal_connect(quitMi, "activate", G_CALLBACK(on_quit), NULL);
+    g_signal_connect(quitMi, "activate", G_CALLBACK(on_quit), window);
 
     g_signal_connect(copyMi, "activate", G_CALLBACK(on_copy), window);
     g_signal_connect(pasteMi, "activate", G_CALLBACK(on_paste), window);
@@ -720,10 +1124,9 @@ GtkWidget* create_main_window(void) {
     g_signal_connect(insertPageBreakMi, "activate", G_CALLBACK(on_insert_page_break), window);
     g_signal_connect(toggleThemeMi, "activate", G_CALLBACK(on_toggle_theme), window);
 
-
     g_signal_connect(correctMi, "activate", G_CALLBACK(on_correct), window);
     g_signal_connect(reformulateMi, "activate", G_CALLBACK(on_reformulate), window);
-    g_signal_connect(statsMi, "activate", G_CALLBACK(update_statusbar), window);
+    g_signal_connect(statsMi, "activate", G_CALLBACK(on_show_shortcuts), window);
 
     g_signal_connect(loadRulesMi, "activate", G_CALLBACK(on_load_rules), window);
     g_signal_connect(applyRulesMi, "activate", G_CALLBACK(on_apply_rules), window);
@@ -733,39 +1136,37 @@ GtkWidget* create_main_window(void) {
     g_signal_connect(docMi, "activate", G_CALLBACK(on_open_doc), window);
     g_signal_connect(shortcutsMi, "activate", G_CALLBACK(on_show_shortcuts), window);
 
-    /* Toolbar buttons */
+    /* Toolbar signals */
     g_signal_connect(newTb, "clicked", G_CALLBACK(on_new), window);
     g_signal_connect(openTb, "clicked", G_CALLBACK(on_open), window);
     g_signal_connect(saveTb, "clicked", G_CALLBACK(on_save), window);
-    g_signal_connect(correctTb, "clicked", G_CALLBACK(on_correct), window);
-    g_signal_connect(reformTb, "clicked", G_CALLBACK(on_reformulate), window);
-    g_signal_connect(loadRulesTb, "clicked", G_CALLBACK(on_load_rules), window);
 
-    /* Signaux texte */
+    /* Font and size */
+    g_signal_connect(fontBtn, "font-set", G_CALLBACK(on_font_set), text_area);
+    g_signal_connect(sizeSpin, "value-changed", G_CALLBACK(on_size_changed), text_area);
+
+    /* Format buttons */
+    g_signal_connect(boldBtn, "toggled", G_CALLBACK(on_toggle_bold_cb), text_area);
+    g_signal_connect(italicBtn, "toggled", G_CALLBACK(on_toggle_italic_cb), text_area);
+    g_signal_connect(underlineBtn, "toggled", G_CALLBACK(on_toggle_underline_cb), text_area);
+
+    /* Align */
+    g_signal_connect(alignLeft, "clicked", G_CALLBACK(on_align_left), text_area);
+    g_signal_connect(alignCenter, "clicked", G_CALLBACK(on_align_center), text_area);
+    g_signal_connect(alignRight, "clicked", G_CALLBACK(on_align_right), text_area);
+
+    /* Styles combo */
+    g_signal_connect(styleCombo, "changed", G_CALLBACK(on_style_combo_changed), text_area);
+
+
+    /* Text buffer signals */
     GtkTextBuffer *buffer = gtk_text_view_get_buffer(GTK_TEXT_VIEW(text_area));
     g_signal_connect(buffer, "changed", G_CALLBACK(on_text_changed), window);
 
-    /* Stocker références utiles sur la fenêtre */
-    g_object_set_data(G_OBJECT(window), "text_area", text_area);
-    g_object_set_data(G_OBJECT(window), "statusbar", statusbar);
-    g_object_set_data(G_OBJECT(window), "dark_mode", GINT_TO_POINTER(FALSE));
-
-    /* Appliquer zoom initial */
+    /* Initial zoom application */
     update_zoom(text_area);
-
-    /* Accélérateurs clavier */
-    GtkAccelGroup *accel = gtk_accel_group_new();
-    gtk_window_add_accel_group(GTK_WINDOW(window), accel);
-    /* Ctrl + (Zoom avant) */
-    gtk_widget_add_accelerator(zoomInMi, "activate", accel, GDK_KEY_plus, GDK_CONTROL_MASK, GTK_ACCEL_VISIBLE);
-    gtk_widget_add_accelerator(zoomOutMi, "activate", accel, GDK_KEY_minus, GDK_CONTROL_MASK, GTK_ACCEL_VISIBLE);
-    gtk_widget_add_accelerator(zoomResetMi, "activate", accel, GDK_KEY_0, GDK_CONTROL_MASK, GTK_ACCEL_VISIBLE);
-    gtk_widget_add_accelerator(saveMi, "activate", accel, GDK_KEY_s, GDK_CONTROL_MASK, GTK_ACCEL_VISIBLE);
-    gtk_widget_add_accelerator(openMi, "activate", accel, GDK_KEY_o, GDK_CONTROL_MASK, GTK_ACCEL_VISIBLE);
-    gtk_widget_add_accelerator(newMi, "activate", accel, GDK_KEY_n, GDK_CONTROL_MASK, GTK_ACCEL_VISIBLE);
-
-    /* Afficher tout */
-    gtk_widget_show_all(window);
     update_statusbar(window);
+
+    gtk_widget_show_all(window);
     return window;
 }
