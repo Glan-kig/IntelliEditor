@@ -1,5 +1,6 @@
 #ifndef RULES_H
 #define RULES_H
+#include <gtk/gtk.h>
 
 
 #include <stdbool.h>
@@ -54,5 +55,7 @@ void run_full_diagnostic(RuleReport* report, const char* text);
 void run_rule_engine(RuleReport* report, const char* current_text);
 
 void free_rule_report(RuleReport* report);
+
+GtkWidget*create_rules_panel(void);
 
 #endif
