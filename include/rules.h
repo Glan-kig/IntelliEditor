@@ -1,9 +1,13 @@
 #ifndef RULES_H
 #define RULES_H
-#include <gtk/gtk.h>
-
-
 #include <stdbool.h>
+
+// Forward-declarations UI (évite d'imposer gtk/gtk.h côté logique)
+typedef struct _GtkTextBuffer GtkTextBuffer;
+typedef struct _GtkWidget GtkWidget;
+
+
+
 
 
 // Niveaux de sévérité définis dans le projet [cite: 164, 213]
@@ -32,12 +36,24 @@ typedef struct {
     void* parameter;           // Paramètre flexible (string, int, ou structure) 
 } Rule;
 
-// Structure pour le rapport de conformité 
+// Structure d'une issue (problème) détectée par une règle
 typedef struct {
-    Rule* rules;               // Tableau de règles
-    int rule_count;            // Nombre total de règles
-    int rules_ok;              // Nombre de règles respectées [cite: 130]
+    int line;                  // Ligne (1-base)
+    char type[32];            // Catégorie / type (ex: "structure", "regex")
+    char message[256];        // Message affiché dans le panneau
+    int offset;               // Offset dans le texte (en caractères, 0-base)
+} RuleIssue;
+
+// Structure pour le rapport de conformité
+typedef struct {
+    Rule* rules;               // Tableau de règles (utilisé par le moteur existant)
+    int rule_count;           // Nombre total de règles
+    int rules_ok;             // Nombre de règles respectées
+
+    RuleIssue* issues;       // Liste des issues (pour l'UI)
+    int issue_count;         // Nombre total d'issues
 } RuleReport;
+
 
 // Prototype de la fonction de chargement des règles depuis un fichier JSON
 RuleReport* load_rules(const char* filename);
@@ -58,4 +74,8 @@ void free_rule_report(RuleReport* report);
 
 GtkWidget*create_rules_panel(void);
 
+// Applique les règles au buffer et renvoie un rapport (caller -> free_rule_report)
+RuleReport* apply_rules_to_buffer(GtkTextBuffer* buffer);
+
 #endif
+
