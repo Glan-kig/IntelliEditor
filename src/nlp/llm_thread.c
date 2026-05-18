@@ -16,16 +16,38 @@ LLMTask *queue = NULL;
 pthread_mutex_t lock = PTHREAD_MUTEX_INITIALIZER; // Verrou pour la sécurité
 pthread_cond_t cond = PTHREAD_COND_INITIALIZER;   // Signal de réveil
 
+static int stop_thread = 0;
+static pthread_t thread_id;
+static int thread_started = 0;
+
 // Ligne par ligne : Ajoute une demande d'analyse dans la file
 void push_llm_task(const char *t, const char *i) {
-    pthread_mutex_lock(&lock); // On bloque l'accès aux autres threads
+    if (!t || !i) return;
+
+    pthread_mutex_lock(&lock);
+
     LLMTask *new_t = malloc(sizeof(LLMTask));
+    if (!new_t) {
+        pthread_mutex_unlock(&lock);
+        fprintf(stderr, "[ERROR] push_llm_task: échec malloc\n");
+        return;
+    }
+
     new_t->text = strdup(t);
     new_t->instruction = strdup(i);
+    if (!new_t->text || !new_t->instruction) {
+        free(new_t->text);
+        free(new_t->instruction);
+        free(new_t);
+        pthread_mutex_unlock(&lock);
+        fprintf(stderr, "[ERROR] push_llm_task: échec strdup\n");
+        return;
+    }
+
     new_t->next = queue;
     queue = new_t;
-    pthread_cond_signal(&cond); // On réveille l'ouvrier (Worker)
-    pthread_mutex_unlock(&lock); // On libère l'accès
+    pthread_cond_signal(&cond);
+    pthread_mutex_unlock(&lock);
 }
 // Dans ce fichier, on va créer un thread qui tourne en permanence pour traiter les demandes d'analyse sémantique. Les autres parties du programme peuvent ajouter des tâches à la file, et le thread les traitera une par une.
 
@@ -33,13 +55,15 @@ void push_llm_task(const char *t, const char *i) {
 void* llm_worker_func(void* arg) {
     while (1) {
         pthread_mutex_lock(&lock);
-        
-        // Tant que la file est vide, on s'endort pour ne pas consommer de CPU.
-        while (queue == NULL) {
+        while (queue == NULL && !stop_thread) {
             pthread_cond_wait(&cond, &lock);
         }
-        
-        // On récupère la tâche (Sortie de la file)
+
+        if (queue == NULL && stop_thread) {
+            pthread_mutex_unlock(&lock);
+            break;
+        }
+
         LLMTask* task = queue;
         queue = queue->next;
         pthread_mutex_unlock(&lock);
@@ -62,6 +86,33 @@ void* llm_worker_func(void* arg) {
 // Fonction pour démarrer l'ouvrier au lancement du programme
 void start_llm_thread() {
     pthread_t thread_id;
-    pthread_create(&thread_id, NULL, llm_worker_func, NULL);
+    int result = pthread_create(&thread_id, NULL, llm_worker_func, NULL);
+    if (result != 0) {
+        fprintf(stderr, "[ERROR] start_llm_thread: pthread_create failed\n");
+        return;
+    }
+    thread_started = 1;
     pthread_detach(thread_id); // Le thread vit sa vie ou fonctionne de manière autonome.
+}
+
+// Fonction pour arrêter proprement le thread au moment de la fermeture du programme
+void stop_llm_thread() {
+    pthread_mutex_lock(&lock);
+    stop_thread = 1;
+    pthread_cond_signal(&cond);
+    pthread_mutex_unlock(&lock);
+
+    if (thread_started) {
+        pthread_join(thread_id, NULL);
+        thread_started = 0;
+    }
+
+    // Optionnel : libérer les tâches restantes si on veut un arrêt immédiat
+    while (queue) {
+        LLMTask *task = queue;
+        queue = queue->next;
+        free(task->text);
+        free(task->instruction);
+        free(task);
+    }
 }
