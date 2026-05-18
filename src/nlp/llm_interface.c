@@ -8,5 +8,6 @@ void nlp_system_init() {
 }
 
 void nlp_system_cleanup() {
+    stop_llm_thread();
     cleanup_spell_checker();
 }

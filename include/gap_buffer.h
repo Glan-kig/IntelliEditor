@@ -17,6 +17,15 @@
 /** Structure opaque du Gap Buffer. */
 typedef struct GapBuffer GapBuffer;
 
+/* Définition complète de la structure (privée à cette implémentation) */
+struct GapBuffer {
+    char   *buffer;    // Tableau de caractères avec gap
+    size_t  size;      // Taille totale du buffer
+    size_t  gap_start; // Début du gap
+    size_t  gap_end;   // Fin du gap (premier octet après le gap)
+    size_t  cursor;    // Position logique du curseur
+};
+
 /**
  * @brief Crée un nouveau Gap Buffer.
  * @param initial_size Capacité initiale en octets.

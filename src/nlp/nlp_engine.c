@@ -5,11 +5,11 @@
 #include <stdlib.h>
 
 
-void nlp_process_check(const char* text, const char* rule_instruction) {
+void nlp_process_check(const char* text, const char* section_name, const char* rule_instruction) {
     // Si la règle demande une analyse sémantique 
     if (rule_instruction != NULL) {
         // On utilise ton tokenizer pour isoler la partie à envoyer
-        char* section = extract_section(text, "Introduction");
+        char* section = extract_section(text, section_name);
         
         if (section) {
             // On l'envoie à la file asynchrone (llm_thread.c)
