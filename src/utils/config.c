@@ -1,95 +1,166 @@
+/**
+ * @file config.c
+ * @brief Parser INI minimaliste basé sur fopen/fgets.
+ *
+ * Format supporté :
+ *   ; commentaire
+ *   [section]
+ *   clé = valeur
+ *
+ * @author DEV-A
+ */
+#include "config.h"
+#include "memory.h"
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
-#include <errno.h>
-#include <cjson/cJSON.h>
-#include "../../include/config.h"
+#include <ctype.h>
+#include <strings.h>
 
-int load_config(const char *filename, AppConfig *config) {
-    if (!filename || !config) return 0;
+#define MAX_LINE 512
 
-    FILE *file = fopen(filename, "r");
-    if (!file) {
-        fprintf(stderr, "Impossible d'ouvrir le fichier de config '%s': %s\n", filename, strerror(errno));
-        return 0;
-    }
+/** Entrée clé/valeur dans une section. */
+typedef struct Entry {
+    char         *section;
+    char         *key;
+    char         *value;
+    struct Entry *next;
+} Entry;
 
-    if (fseek(file, 0, SEEK_END) != 0) {
-        fprintf(stderr, "Erreur lors du positionnement dans le fichier de config\n");
-        fclose(file);
-        return 0;
-    }
-    long length = ftell(file);
-    if (length < 0) {
-        fprintf(stderr, "Impossible d'obtenir la taille du fichier de config\n");
-        fclose(file);
-        return 0;
-    }
-    if (fseek(file, 0, SEEK_SET) != 0) {
-        fprintf(stderr, "Erreur lors du repositionnement du fichier de config\n");
-        fclose(file);
-        return 0;
-    }
+struct Config {
+    Entry *head;
+};
 
-    char *data = malloc((size_t)length + 1);
-    if (!data) {
-        fprintf(stderr, "Échec d'allocation mémoire pour la lecture de la config\n");
-        fclose(file);
-        return 0;
-    }
+/* --------------------------------------------------------------------------
+ * Helpers internes
+ * -------------------------------------------------------------------------- */
 
-    size_t total_read = 0;
-    while (total_read < (size_t)length) {
-        size_t chunk = fread(data + total_read, 1, (size_t)length - total_read, file);
-        if (chunk == 0) {
-            if (ferror(file)) {
-                fprintf(stderr, "Erreur de lecture du fichier de config\n");
-                free(data);
-                fclose(file);
-                return 0;
-            }
-            break;
+/** Supprime espaces en début/fin (modifie la chaîne in-place). */
+static char *trim(char *s) {
+    while (*s && isspace((unsigned char)*s)) s++;
+    if (!*s) return s;
+    char *end = s + strlen(s) - 1;
+    while (end > s && isspace((unsigned char)*end)) *end-- = '\0';
+    return s;
+}
+
+/** Duplique une chaîne avec notre allocateur. */
+static char *dup_str(const char *src) {
+    if (!src) return NULL;
+    size_t n = strlen(src) + 1;
+    char *p = MEM_ALLOC(n);
+    if (p) memcpy(p, src, n);
+    return p;
+}
+
+/** Ajoute une entrée en tête de liste. */
+static bool add_entry(Config *cfg, const char *section,
+                      const char *key, const char *value) {
+    Entry *e = MEM_ALLOC(sizeof(Entry));
+    if (!e) return false;
+    e->section = dup_str(section);
+    e->key     = dup_str(key);
+    e->value   = dup_str(value);
+    if (!e->section || !e->key || !e->value) {
+        MEM_FREE(e->section); MEM_FREE(e->key);
+        MEM_FREE(e->value);   MEM_FREE(e);
+        return false;
+    }
+    e->next = cfg->head;
+    cfg->head = e;
+    return true;
+}
+
+/** Recherche une entrée par section+clé. */
+static const Entry *find_entry(const Config *cfg, const char *section,
+                               const char *key) {
+    for (const Entry *e = cfg->head; e; e = e->next) {
+        if (strcasecmp(e->section, section) == 0 &&
+            strcasecmp(e->key, key) == 0)
+            return e;
+    }
+    return NULL;
+}
+
+/* --------------------------------------------------------------------------
+ * API publique
+ * -------------------------------------------------------------------------- */
+
+Config *config_load(const char *filepath) {
+    if (!filepath) return NULL;
+    FILE *f = fopen(filepath, "r");
+    if (!f) return NULL;
+
+    Config *cfg = MEM_CALLOC(1, sizeof(Config));
+    if (!cfg) { fclose(f); return NULL; }
+
+    char line[MAX_LINE];
+    char current_section[128] = "global";
+
+    while (fgets(line, sizeof(line), f)) {
+        char *s = trim(line);
+
+        /* Lignes vides ou commentaires */
+        if (*s == '\0' || *s == ';' || *s == '#') continue;
+
+        /* Section [nom] */
+        if (*s == '[') {
+            char *end = strchr(s, ']');
+            if (!end) continue;
+            *end = '\0';
+            strncpy(current_section, trim(s + 1), sizeof(current_section) - 1);
+            current_section[sizeof(current_section) - 1] = '\0';
+            continue;
         }
-        total_read += chunk;
-    }
-    data[total_read] = '\0';
-    fclose(file);
 
-    cJSON *root = cJSON_Parse(data);
-    if (!root) {
-        fprintf(stderr, "Erreur de format JSON dans la config\n");
-        free(data);
-        return 0;
+        /* Paire clé = valeur */
+        char *eq = strchr(s, '=');
+        if (!eq) continue;
+        *eq = '\0';
+        char *key = trim(s);
+        char *val = trim(eq + 1);
+        add_entry(cfg, current_section, key, val);
     }
 
-    /* Valeurs par défaut */
-    config->server_url[0] = '\0';
-    config->rules_path[0] = '\0';
-    config->timeout_seconds = 30;
-    config->temperature = 1.0f;
+    fclose(f);
+    return cfg;
+}
 
-    cJSON *item = NULL;
-    item = cJSON_GetObjectItem(root, "server_url");
-    if (cJSON_IsString(item) && item->valuestring) {
-        snprintf(config->server_url, sizeof(config->server_url), "%s", item->valuestring);
+void config_free(Config *cfg) {
+    if (!cfg) return;
+    Entry *e = cfg->head;
+    while (e) {
+        Entry *next = e->next;
+        MEM_FREE(e->section);
+        MEM_FREE(e->key);
+        MEM_FREE(e->value);
+        MEM_FREE(e);
+        e = next;
     }
+    MEM_FREE(cfg);
+}
 
-    item = cJSON_GetObjectItem(root, "rules_path");
-    if (cJSON_IsString(item) && item->valuestring) {
-        snprintf(config->rules_path, sizeof(config->rules_path), "%s", item->valuestring);
-    }
+const char *config_get_string(const Config *cfg, const char *section,
+                              const char *key, const char *default_value) {
+    if (!cfg) return default_value;
+    const Entry *e = find_entry(cfg, section, key);
+    return e ? e->value : default_value;
+}
 
-    item = cJSON_GetObjectItem(root, "timeout");
-    if (cJSON_IsNumber(item)) {
-        config->timeout_seconds = item->valueint;
-    }
+int config_get_int(const Config *cfg, const char *section,
+                   const char *key, int default_value) {
+    const char *v = config_get_string(cfg, section, key, NULL);
+    if (!v) return default_value;
+    return atoi(v);
+}
 
-    item = cJSON_GetObjectItem(root, "temperature");
-    if (cJSON_IsNumber(item)) {
-        config->temperature = (float)item->valuedouble;
-    }
-
-    cJSON_Delete(root);
-    free(data);
-    return 1;
+bool config_get_bool(const Config *cfg, const char *section,
+                     const char *key, bool default_value) {
+    const char *v = config_get_string(cfg, section, key, NULL);
+    if (!v) return default_value;
+    if (strcasecmp(v, "true") == 0 || strcasecmp(v, "yes") == 0 ||
+        strcmp(v, "1") == 0) return true;
+    if (strcasecmp(v, "false") == 0 || strcasecmp(v, "no") == 0 ||
+        strcmp(v, "0") == 0) return false;
+    return default_value;
 }
