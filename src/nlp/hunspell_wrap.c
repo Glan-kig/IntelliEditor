@@ -27,6 +27,7 @@ int is_word_correct(const char* word) {
     return Hunspell_spell(handle, word);
 }
 
+// Nettoie les ressources de Hunspell avant de quitter le programme.
 void cleanup_spell_checker() {
     if (handle) {
         Hunspell_destroy(handle);

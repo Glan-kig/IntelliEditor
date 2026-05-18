@@ -43,6 +43,11 @@ RuleStatus ask_llm_semantic_check(const char* section_text, const char* instruct
         cJSON_AddStringToObject(root, "grammar", "root ::= \"CONFORME\" | \"NON_CONFORME\"");
 
         char *json_body = cJSON_Print(root);
+        
+        // Configuration des Headers (Important pour le JSON)
+        struct curl_slist *headers = NULL;
+        headers = curl_slist_append(headers, "Content-Type: application/json");
+
         if (!json_body) {
             fprintf(stderr, "[ERROR] ask_llm_semantic_check: échec cJSON_Print\n");
             cJSON_Delete(root);
@@ -50,10 +55,7 @@ RuleStatus ask_llm_semantic_check(const char* section_text, const char* instruct
             curl_easy_cleanup(curl);
             return STATUS_NON_CONFORME;
         }
-
-        // Configuration des Headers (Important pour le JSON)
-        struct curl_slist *headers = NULL;
-        headers = curl_slist_append(headers, "Content-Type: application/json");
+        
         if (!headers) {
             fprintf(stderr, "[ERROR] ask_llm_semantic_check: échec curl_slist_append\n");
             free(json_body);

@@ -85,7 +85,6 @@ void* llm_worker_func(void* arg) {
 
 // Fonction pour démarrer l'ouvrier au lancement du programme
 void start_llm_thread() {
-    pthread_t thread_id;
     int result = pthread_create(&thread_id, NULL, llm_worker_func, NULL);
     if (result != 0) {
         fprintf(stderr, "[ERROR] start_llm_thread: pthread_create failed\n");
@@ -102,8 +101,8 @@ void stop_llm_thread() {
     pthread_cond_signal(&cond);
     pthread_mutex_unlock(&lock);
 
+    
     if (thread_started) {
-        pthread_join(thread_id, NULL);
         thread_started = 0;
     }
 
