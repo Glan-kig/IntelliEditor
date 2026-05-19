@@ -1,12 +1,7 @@
 #include <gtk/gtk.h>
 #include "rules.h"
 
-/*
-  Panneau de règles data-driven.
-  - create_rules_panel() construit l’UI de base (titre + list + summary)
-  - rules_panel_update_from_report() remplit la liste à partir de RuleReport
-*/
-
+/* Nettoyer le panneau avant mise à jour */
 static void rules_panel_clear(GtkWidget *panel) {
     GtkWidget *list = g_object_get_data(G_OBJECT(panel), "rules_list");
     if (!list) return;
@@ -18,6 +13,7 @@ static void rules_panel_clear(GtkWidget *panel) {
     g_list_free(children);
 }
 
+/* Choisir une icône selon le type d’issue */
 static const gchar* icon_for_issue_type(const char *type) {
     if (!type) return "⚪";
     if (g_strcmp0(type, "error") == 0) return "❌";
@@ -26,6 +22,7 @@ static const gchar* icon_for_issue_type(const char *type) {
     return "✅";
 }
 
+/* Mettre à jour le panneau avec un rapport */
 void rules_panel_update_from_report(GtkWidget *panel, const RuleReport *report) {
     if (!panel) return;
 
@@ -35,7 +32,6 @@ void rules_panel_update_from_report(GtkWidget *panel, const RuleReport *report) 
     GtkWidget *summary = g_object_get_data(G_OBJECT(panel), "rules_summary");
 
     if (!list) return;
-
 
     if (!report) {
         if (summary) gtk_label_set_text(GTK_LABEL(summary), "Conformité : aucun rapport");
@@ -47,15 +43,9 @@ void rules_panel_update_from_report(GtkWidget *panel, const RuleReport *report) 
     const int issues = report->issue_count;
 
     if (summary) {
-        if (total > 0) {
-            gchar *txt = g_strdup_printf("Conformité : %d/%d règles OK (issues: %d)", ok, total, issues);
-            gtk_label_set_text(GTK_LABEL(summary), txt);
-            g_free(txt);
-        } else {
-            gchar *txt = g_strdup_printf("Conformité : issues: %d", issues);
-            gtk_label_set_text(GTK_LABEL(summary), txt);
-            g_free(txt);
-        }
+        gchar *txt = g_strdup_printf("Conformité : %d/%d règles OK (issues: %d)", ok, total, issues);
+        gtk_label_set_text(GTK_LABEL(summary), txt);
+        g_free(txt);
     }
 
     for (int i = 0; i < report->issue_count; i++) {
@@ -80,6 +70,7 @@ void rules_panel_update_from_report(GtkWidget *panel, const RuleReport *report) 
     }
 }
 
+/* Créer le panneau de conformité */
 GtkWidget* create_rules_panel(void) {
     GtkWidget *panel = gtk_box_new(GTK_ORIENTATION_VERTICAL, 8);
     gtk_container_set_border_width(GTK_CONTAINER(panel), 10);
@@ -105,4 +96,3 @@ GtkWidget* create_rules_panel(void) {
 
     return panel;
 }
-

@@ -1,0 +1,72 @@
+/* Light theme for IntelliEditor - style_light.css */
+
+window, .window {
+    background-color: #f5f6f8;
+    color: #222222;
+    font-family: "Segoe UI", "Helvetica Neue", Arial, sans-serif;
+}
+
+/* Menubar */
+menubar {
+    background-color: #ffffff;
+    border: 1px solid #d0d4d9;
+    border-radius: 8px;
+    padding: 6px;
+    margin: 6px;
+}
+
+menuitem {
+    padding: 6px 12px;
+    border-radius: 6px;
+    color: #222222;
+    font-size: 11pt;
+}
+
+menuitem:hover {
+    background-color: #eef2f6;
+}
+
+/* TextView */
+textview {
+    background-color: #ffffff;
+    color: #111111;
+    border: 1px solid #d8dbe0;
+    border-radius: 10px;
+    padding: 12px;
+}
+
+/* ScrolledWindow content padding */
+scrolledwindow {
+    background-color: transparent;
+}
+
+/* Rules panel (panneau de conformité) */
+.box.rules-panel, .rules-panel {
+    background-color: #fbfdff;
+    border: 1px solid #e1e6ea;
+    border-radius: 10px;
+    padding: 10px;
+}
+
+/* List items inside rules panel */
+label {
+    color: #222222;
+}
+
+/* Statusbar */
+statusbar {
+    background-color: #f0f2f4;
+    border-top: 1px solid #d0d4d9;
+    padding: 6px;
+    font-size: 10pt;
+}
+
+/* Revealer (volet) */
+revealer {
+    background-color: transparent;
+}
+
+/* Small helpers */
+.separator {
+    background-color: #e6eaee;
+}
