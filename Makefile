@@ -1,16 +1,19 @@
-# Nom de l'exécutable final
-TARGET = intelli_engine
-# Variables pour cmocka
-TEST_TARGET_CMOCKA = cmocka_tests
-
-# Compilateur
 CC = gcc
+CFLAGS = -Wall -I./include
+LDFLAGS = -lcurl -lcjson -lhunspell-1.7 -lpthread
 
-# Options de compilation :
-# -I./include : pour trouver tes headers
-# -Wall -Wextra : pour voir tous les avertissements
-CFLAGS = -I./include -Wall -Wextra -g
+# On ne prend QUE tes fichiers NLP et le test_main
+SRC = src/nlp/llm_client.c \
+      src/nlp/nlp_engine.c \
+      src/nlp/llm_json_parser.c \
+      src/nlp/llm_prompts.c \
+      src/nlp/hunspell_wrap.c \
+      src/nlp/tokenizer.c \
+      src/nlp/llm_thread.c \
+      src/nlp/llm_interface.c \
+      src/test_main.c
 
+<<<<<<< HEAD
 # Bibliothèques à lier (LDFLAGS)
 # -lcjson : pour le JSON
 # -lpcre2-8 : pour les Regex
@@ -53,3 +56,7 @@ clean:
 
 # Pour éviter les conflits avec des fichiers du même nom
 .PHONY: all clean
+=======
+all:
+	$(CC) $(CFLAGS) $(SRC) -o dev_c_test $(LDFLAGS)
+>>>>>>> 309d346bfb40c8d6c5be0b252351d35b27bd0e82
