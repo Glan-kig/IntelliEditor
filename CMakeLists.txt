@@ -21,6 +21,22 @@ include_directories(include ${GTK3_INCLUDE_DIRS} ${CJSON_INCLUDE_DIRS})
 
 # 5. Liste des fichiers sources du moteur (DEV-D)
 set(RULES_SRC
+    src/editor/gap_buffer.c
+    src/editor/formatter.c
+    src/editor/exporter.c
+    src/editor/search_replace.c
+    src/editor/undo_redo.c
+    src/utils/memory.c
+    src/utils/config.c
+    src/utils/encoding.c
+    src/ui/rules_panel.c
+    src/ui/main_window.c
+    src/nlp/nlp_engine.c
+    src/nlp/tokenizer.c
+    src/nlp/llm_interface.c
+    src/nlp/llm_client.c
+    src/nlp/hunspell_wrap.c
+    src/nlp/llm_thread.c
     src/rules/rules.c
     src/rules/rule_engine.c
     src/rules/checkers/regex_checker.c
@@ -34,6 +50,9 @@ target_link_libraries(intelli_engine
     ${GTK3_LIBRARIES} 
     ${CJSON_LIBRARIES} 
     ${PCRE2_LIB}
+    ${HUNSPELL_LIBRARIES}
+    ${CURL_LIBRARIES}
+    Threads::Threads
     m
 )
 

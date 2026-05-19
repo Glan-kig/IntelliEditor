@@ -67,6 +67,7 @@ void rules_panel_update_from_report(GtkWidget *panel, const RuleReport *report) 
         gtk_box_pack_start(GTK_BOX(row), label, TRUE, TRUE, 0);
 
         gtk_list_box_insert(GTK_LIST_BOX(list), row, -1);
+        gtk_widget_show_all(row);
     }
 }
 
