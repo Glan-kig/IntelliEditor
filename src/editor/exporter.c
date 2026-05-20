@@ -154,7 +154,7 @@ static void pdf_escape_text(GString *out, const char *text, gsize len) {
     }
 }
 
-static bool export_pdf(const GapBuffer *gb, const Formatter *fmt, FILE *f) {
+bool export_pdf(const GapBuffer *gb, const Formatter *fmt, FILE *f) {
     (void)fmt;
     char *content = gap_buffer_to_string(gb);
     if (!content) return false;

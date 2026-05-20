@@ -4,6 +4,7 @@
 #include <curl/curl.h>
 #include <cjson/cJSON.h>
 #include "../../include/rules.h"
+#include "../../include/nlp.h"
 
 // Callback amélioré pour éviter les débordements
 size_t write_callback(void *ptr, size_t size, size_t nmemb, void *userdata) {
@@ -74,21 +75,24 @@ RuleStatus ask_llm_semantic_check(const char* section_text, const char* instruct
 
         // Exécution de l'appel
         CURLcode res = curl_easy_perform(curl);
-        
-    if (res == CURLE_OK) {
-    printf("Réponse brute : %s\n", response_buffer);
 
-    // On cherche la première occurrence de chaque mot
-        char *pos_conforme = strstr(response_buffer, "CONFORME");
-        char *pos_non_conforme = strstr(response_buffer, "NON_CONFORME");
+        if (res == CURLE_OK) {
+            printf("Réponse brute : %s\n", response_buffer);
+            nlp_set_last_llm_response(response_buffer);
 
-        // Si CONFORME apparaît en premier, ou s'il n'y a pas du tout de NON_CONFORME
-        if (pos_conforme != NULL && (pos_non_conforme == NULL || pos_conforme < pos_non_conforme)) {
-        status = STATUS_CONFORME;
+            // On cherche la première occurrence de chaque mot
+            char *pos_conforme = strstr(response_buffer, "CONFORME");
+            char *pos_non_conforme = strstr(response_buffer, "NON_CONFORME");
+
+            // Si CONFORME apparaît en premier, ou s'il n'y a pas du tout de NON_CONFORME
+            if (pos_conforme != NULL && (pos_non_conforme == NULL || pos_conforme < pos_non_conforme)) {
+                status = STATUS_CONFORME;
+            } else {
+                status = STATUS_NON_CONFORME;
+            }
         } else {
-        status = STATUS_NON_CONFORME;
-       }
-    }
+            nlp_set_last_llm_response("[ERREUR] Échec de la requête LLM (curl).");
+        }
 
         // Nettoyage rigoureux
         curl_slist_free_all(headers);

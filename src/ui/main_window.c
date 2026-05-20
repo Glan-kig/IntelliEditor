@@ -28,31 +28,75 @@
 #include "search_replace.h"
 #include "undo_redo.h"
 #include "rules.h"
+#include "nlp.h"
+#include "llm_thread.h"
 
 /* ---------- CSS theme loader (global provider) ---------- */
 static GtkCssProvider *global_css_provider = NULL;
 static gboolean theme_is_dark = FALSE;
 
 static void load_css_file(const char *path) {
-    if (global_css_provider) {
-        g_object_unref(global_css_provider);
-        global_css_provider = NULL;
+    if (!path) return;
+
+    /* IMPORTANT:
+     * Ne pas empiler des GtkCssProvider à chaque bascule.
+     * On réutilise la même instance et on recharge le contenu.
+     */
+    if (!global_css_provider) {
+        global_css_provider = gtk_css_provider_new();
+        gtk_style_context_add_provider_for_screen(
+            gdk_screen_get_default(),
+            GTK_STYLE_PROVIDER(global_css_provider),
+            GTK_STYLE_PROVIDER_PRIORITY_USER);
     }
-    global_css_provider = gtk_css_provider_new();
-    gtk_css_provider_load_from_path(global_css_provider, path, NULL);
-    gtk_style_context_add_provider_for_screen(
-        gdk_screen_get_default(),
-        GTK_STYLE_PROVIDER(global_css_provider),
-        GTK_STYLE_PROVIDER_PRIORITY_USER);
+
+    /* GTK charge le CSS via un chemin relatif au CWD.
+     * Quand l'exécutable est lancé depuis build/, "resources/..." n'existe pas.
+     * On essaye d'abord le chemin fourni, puis un chemin relatif au dossier parent du binaire.
+     */
+    GError *err = NULL;
+
+    /* 1) chemin fourni */
+    if (!gtk_css_provider_load_from_path(global_css_provider, path, &err) && err) {
+        g_clear_error(&err);
+
+        /* 2) fallback */
+        char *fallback_path = NULL;
+        if (g_str_has_prefix(path, "resources/")) {
+            fallback_path = g_strconcat("../", path, NULL);
+        } else {
+            fallback_path = g_strconcat("../resources/", path, NULL);
+        }
+
+        if (fallback_path) {
+            err = NULL;
+            gtk_css_provider_load_from_path(global_css_provider, fallback_path, &err);
+            if (err) {
+                g_printerr("CSS load failed (fallback): %s\n", err->message);
+                g_clear_error(&err);
+            }
+            g_free(fallback_path);
+        }
+    }
 }
 
 static void on_toggle_theme(GtkWidget *widget, gpointer data) {
+    GtkWidget *window = GTK_WIDGET(data);
     (void)widget;
+
     theme_is_dark = !theme_is_dark;
     if (theme_is_dark)
         load_css_file("resources/style_dark.css");
     else
         load_css_file("resources/style_light.css");
+
+    /* Forcer un refresh complet pour que GTK applique bien le nouveau CSS
+     * (widgets déjà rendus peuvent garder l'ancien style sinon).
+     */
+    if (window) {
+        gtk_widget_queue_draw(window);
+        gtk_widget_queue_resize(window);
+    }
 }
 
 /* ---------- Helpers / état stocké dans la fenêtre ---------- */
@@ -217,7 +261,26 @@ static GtkWidget* create_page_widget(GtkWidget *window);
 static GtkWidget* add_page_at_end(GtkWidget *window, GtkWidget *pages_box);
 static GtkWidget* insert_page_after(GtkWidget *window, GtkWidget *pages_box, GtkWidget *after_textview);
 static GtkWidget* get_current_textview(GtkWidget *window);
+
 void apply_margins_to_all_pages(GtkWidget *window); /* defined later */
+
+/* GapBuffer / helpers used across callbacks */
+GapBuffer* collect_pages_to_gap_buffer(GtkWidget *window);
+void load_document_from_gap_buffer(GtkWidget *window, GapBuffer *gb);
+
+/* Selection helpers */
+static void select_text_range_in_current_page(GtkWidget *window, size_t start, size_t length);
+
+/* Current page text helpers (used by undo/redo/search/replace) */
+static char *get_current_page_text(GtkWidget *window);
+static void set_current_page_text(GtkWidget *window, const char *text);
+
+/* Rules panel update helper */
+void rules_panel_update_from_report(GtkWidget *panel, const RuleReport *report);
+
+/* GapBuffer helpers for UI<->model bridging (needed by rule engine, open/save, search/replace) */
+GapBuffer* collect_pages_to_gap_buffer(GtkWidget *window);
+void load_document_from_gap_buffer(GtkWidget *window, GapBuffer *gb);
 
 /* ---------- Page focus callback (sets current page textview) ---------- */
 static gboolean on_page_focus_in(GtkWidget *widget, GdkEvent *event, gpointer user_data) {
@@ -612,11 +675,384 @@ static GtkWidget* get_current_textview(GtkWidget *window) {
     return first_tv;
 }
 
+/* ---------- GapBuffer bridge helpers (required for linking) ---------- */
+
+/* Collect text from all pages and return it in a GapBuffer.
+ * Pages are concatenated with a '\n' between them to preserve separation.
+ */
+GapBuffer* collect_pages_to_gap_buffer(GtkWidget *window) {
+    if (!window) return NULL;
+
+    GtkWidget *pages_box = GTK_WIDGET(g_object_get_data(G_OBJECT(window), "pages_box"));
+    if (!pages_box) return NULL;
+
+    /* Rough initial capacity: sum of page lengths */
+    size_t total_len = 0;
+    GList *children_len = gtk_container_get_children(GTK_CONTAINER(pages_box));
+    for (GList *l = children_len; l; l = l->next) {
+        GtkWidget *frame = GTK_WIDGET(l->data);
+        GtkWidget *tv = GTK_WIDGET(g_object_get_data(G_OBJECT(frame), "page_textview"));
+        if (!tv) tv = gtk_bin_get_child(GTK_BIN(frame));
+        if (!tv || !GTK_IS_TEXT_VIEW(tv)) continue;
+
+        GtkTextBuffer *buffer = gtk_text_view_get_buffer(GTK_TEXT_VIEW(tv));
+        GtkTextIter start, end;
+        gtk_text_buffer_get_start_iter(buffer, &start);
+        gtk_text_buffer_get_end_iter(buffer, &end);
+        total_len += (size_t)gtk_text_iter_get_offset(&end);
+        total_len += 1; /* separator */
+    }
+    g_list_free(children_len);
+
+    GapBuffer *gb = gap_buffer_create(total_len + 16);
+    if (!gb) return NULL;
+
+    int page_index = 0;
+    GList *children = gtk_container_get_children(GTK_CONTAINER(pages_box));
+    for (GList *l = children; l; l = l->next, page_index++) {
+        GtkWidget *frame = GTK_WIDGET(l->data);
+        GtkWidget *tv = GTK_WIDGET(g_object_get_data(G_OBJECT(frame), "page_textview"));
+        if (!tv) tv = gtk_bin_get_child(GTK_BIN(frame));
+        if (!tv || !GTK_IS_TEXT_VIEW(tv)) continue;
+
+        GtkTextBuffer *buffer = gtk_text_view_get_buffer(GTK_TEXT_VIEW(tv));
+        GtkTextIter start, end;
+        gtk_text_buffer_get_start_iter(buffer, &start);
+        gtk_text_buffer_get_end_iter(buffer, &end);
+
+        char *page_text = gtk_text_buffer_get_text(buffer, &start, &end, FALSE);
+        if (page_text) {
+            if (page_index > 0) {
+                gap_buffer_insert_char(gb, '\n');
+            }
+            gap_buffer_insert_string(gb, page_text);
+            free(page_text);
+        } else {
+            if (page_index > 0) {
+                gap_buffer_insert_char(gb, '\n');
+            }
+        }
+    }
+    g_list_free(children);
+
+    return gb;
+}
+
+/* Load a GapBuffer into the UI: clear existing pages and insert a single page with full text. */
+void load_document_from_gap_buffer(GtkWidget *window, GapBuffer *gb) {
+    if (!window || !gb) return;
+
+    GtkWidget *pages_box = GTK_WIDGET(g_object_get_data(G_OBJECT(window), "pages_box"));
+    if (!pages_box) return;
+
+    /* Clear existing pages */
+    GList *children = gtk_container_get_children(GTK_CONTAINER(pages_box));
+    for (GList *l = children; l; l = l->next) {
+        gtk_widget_destroy(GTK_WIDGET(l->data));
+    }
+    g_list_free(children);
+
+    /* Create one page */
+    GtkWidget *page = add_page_at_end(window, pages_box);
+    if (!page) return;
+
+    GtkWidget *tv = GTK_WIDGET(g_object_get_data(G_OBJECT(page), "page_textview"));
+    if (!tv) tv = gtk_bin_get_child(GTK_BIN(page));
+    if (!tv || !GTK_IS_TEXT_VIEW(tv)) return;
+
+    char *text = gap_buffer_to_string(gb);
+    if (!text) text = strdup("");
+
+    set_undo_suppressed(window, TRUE);
+    GtkTextBuffer *buffer = gtk_text_view_get_buffer(GTK_TEXT_VIEW(tv));
+    gtk_text_buffer_set_text(buffer, text, -1);
+    set_undo_suppressed(window, FALSE);
+
+    g_object_set_data(G_OBJECT(window), "current_page", tv);
+
+    free(text);
+}
+
+/* Select a range in the current page text view, where start/length are offsets in bytes
+ * (as returned by the search module).
+ */
+static void select_text_range_in_current_page(GtkWidget *window, size_t start, size_t length) {
+    if (!window) return;
+
+    GtkWidget *tv = get_current_textview(window);
+    if (!tv || !GTK_IS_TEXT_VIEW(tv)) return;
+
+    GtkTextBuffer *buffer = gtk_text_view_get_buffer(GTK_TEXT_VIEW(tv));
+
+    GtkTextIter iter_start;
+    GtkTextIter iter_end;
+
+    gtk_text_buffer_get_start_iter(buffer, &iter_start);
+    gtk_text_buffer_get_end_iter(buffer, &iter_end);
+
+    size_t total = (size_t)gtk_text_iter_get_offset(&iter_end);
+    if (start > total) start = total;
+    if (length > (total - start)) length = (total - start);
+
+    gtk_text_buffer_get_iter_at_offset(buffer, &iter_start, start);
+    gtk_text_buffer_get_iter_at_offset(buffer, &iter_end, start + length);
+
+    gtk_text_buffer_select_range(buffer, &iter_start, &iter_end);
+    gtk_widget_grab_focus(tv);
+}
+
 /* ---------- Callbacks and actions (file, edit, format, zoom) ---------- */
+static void push_status(GtkWidget *window, const char *msg) {
+    if (!window || !msg) return;
+    GtkWidget *statusbar = g_object_get_data(G_OBJECT(window), "statusbar");
+    if (!statusbar) return;
+    gtk_statusbar_push(GTK_STATUSBAR(statusbar), 0, msg);
+}
+
+static GPtrArray *get_references_store(GtkWidget *window) {
+    GPtrArray *arr = g_object_get_data(G_OBJECT(window), "references_store");
+    if (!arr) {
+        arr = g_ptr_array_new_with_free_func(g_free);
+        g_object_set_data_full(G_OBJECT(window), "references_store", arr, (GDestroyNotify)g_ptr_array_unref);
+    }
+    return arr;
+}
+
 static void on_menu_action_stub(GtkWidget *widget, gpointer data) {
     const char *label = gtk_menu_item_get_label(GTK_MENU_ITEM(widget));
     g_print("Action menu: %s\n", label);
     (void)data;
+    (void)widget;
+}
+
+static void on_settings_dialog(GtkWidget *widget, gpointer data) {
+    GtkWidget *window = GTK_WIDGET(data);
+    GtkWidget *dialog = gtk_dialog_new_with_buttons("Paramètres",
+                                                    GTK_WINDOW(window),
+                                                    GTK_DIALOG_MODAL | GTK_DIALOG_DESTROY_WITH_PARENT,
+                                                    "_Annuler", GTK_RESPONSE_CANCEL,
+                                                    "_Enregistrer", GTK_RESPONSE_ACCEPT,
+                                                    NULL);
+
+    GtkWidget *content = gtk_dialog_get_content_area(GTK_DIALOG(dialog));
+    GtkWidget *grid = gtk_grid_new();
+    gtk_grid_set_row_spacing(GTK_GRID(grid), 8);
+    gtk_grid_set_column_spacing(GTK_GRID(grid), 8);
+    gtk_container_set_border_width(GTK_CONTAINER(grid), 10);
+
+    GtkWidget *dict_label = gtk_label_new("Chemin dictionnaire :");
+    GtkWidget *lang_label = gtk_label_new("Langue :");
+    GtkWidget *dict_entry = gtk_entry_new();
+    GtkWidget *lang_entry = gtk_entry_new();
+    GtkWidget *autosave_check = gtk_check_button_new_with_label("Activer autosave (session)");
+
+    const char *cur_dict = g_object_get_data(G_OBJECT(window), "settings_dict_path");
+    const char *cur_lang = g_object_get_data(G_OBJECT(window), "settings_language");
+    gpointer autosave_p = g_object_get_data(G_OBJECT(window), "settings_autosave");
+
+    gtk_entry_set_text(GTK_ENTRY(dict_entry), cur_dict ? cur_dict : "data/fr_FR.dic");
+    gtk_entry_set_text(GTK_ENTRY(lang_entry), cur_lang ? cur_lang : "fr_FR");
+    gtk_toggle_button_set_active(GTK_TOGGLE_BUTTON(autosave_check), GPOINTER_TO_INT(autosave_p) != 0);
+
+    gtk_grid_attach(GTK_GRID(grid), dict_label, 0, 0, 1, 1);
+    gtk_grid_attach(GTK_GRID(grid), dict_entry, 1, 0, 1, 1);
+    gtk_grid_attach(GTK_GRID(grid), lang_label, 0, 1, 1, 1);
+    gtk_grid_attach(GTK_GRID(grid), lang_entry, 1, 1, 1, 1);
+    gtk_grid_attach(GTK_GRID(grid), autosave_check, 0, 2, 2, 1);
+
+    gtk_container_add(GTK_CONTAINER(content), grid);
+    gtk_widget_show_all(dialog);
+
+    if (gtk_dialog_run(GTK_DIALOG(dialog)) == GTK_RESPONSE_ACCEPT) {
+        const char *dict = gtk_entry_get_text(GTK_ENTRY(dict_entry));
+        const char *lang = gtk_entry_get_text(GTK_ENTRY(lang_entry));
+        gboolean autosave = gtk_toggle_button_get_active(GTK_TOGGLE_BUTTON(autosave_check));
+
+        g_object_set_data_full(G_OBJECT(window), "settings_dict_path", g_strdup(dict), g_free);
+        g_object_set_data_full(G_OBJECT(window), "settings_language", g_strdup(lang), g_free);
+        g_object_set_data(G_OBJECT(window), "settings_autosave", GINT_TO_POINTER(autosave ? 1 : 0));
+
+        push_status(window, "Paramètres enregistrés (session).");
+    }
+
+    gtk_widget_destroy(dialog);
+    (void)widget;
+}
+
+static void on_plugins_dialog(GtkWidget *widget, gpointer data) {
+    GtkWidget *window = GTK_WIDGET(data);
+
+    GtkWidget *dialog = gtk_dialog_new_with_buttons("Gestion des plugins",
+                                                    GTK_WINDOW(window),
+                                                    GTK_DIALOG_MODAL | GTK_DIALOG_DESTROY_WITH_PARENT,
+                                                    "_Fermer", GTK_RESPONSE_CLOSE,
+                                                    "_Appliquer", GTK_RESPONSE_ACCEPT,
+                                                    NULL);
+
+    GtkWidget *content = gtk_dialog_get_content_area(GTK_DIALOG(dialog));
+    GtkWidget *box = gtk_box_new(GTK_ORIENTATION_VERTICAL, 8);
+    gtk_container_set_border_width(GTK_CONTAINER(box), 10);
+
+    GtkWidget *p1 = gtk_check_button_new_with_label("Plugin: Correcteur académique");
+    GtkWidget *p2 = gtk_check_button_new_with_label("Plugin: Citation helper");
+    GtkWidget *p3 = gtk_check_button_new_with_label("Plugin: Nettoyage typographique");
+
+    gtk_toggle_button_set_active(GTK_TOGGLE_BUTTON(p1), GPOINTER_TO_INT(g_object_get_data(G_OBJECT(window), "plugin_academic")) != 0);
+    gtk_toggle_button_set_active(GTK_TOGGLE_BUTTON(p2), GPOINTER_TO_INT(g_object_get_data(G_OBJECT(window), "plugin_citation")) != 0);
+    gtk_toggle_button_set_active(GTK_TOGGLE_BUTTON(p3), GPOINTER_TO_INT(g_object_get_data(G_OBJECT(window), "plugin_typo")) != 0);
+
+    gtk_box_pack_start(GTK_BOX(box), p1, FALSE, FALSE, 0);
+    gtk_box_pack_start(GTK_BOX(box), p2, FALSE, FALSE, 0);
+    gtk_box_pack_start(GTK_BOX(box), p3, FALSE, FALSE, 0);
+    gtk_container_add(GTK_CONTAINER(content), box);
+
+    gtk_widget_show_all(dialog);
+
+    if (gtk_dialog_run(GTK_DIALOG(dialog)) == GTK_RESPONSE_ACCEPT) {
+        g_object_set_data(G_OBJECT(window), "plugin_academic", GINT_TO_POINTER(gtk_toggle_button_get_active(GTK_TOGGLE_BUTTON(p1))));
+        g_object_set_data(G_OBJECT(window), "plugin_citation", GINT_TO_POINTER(gtk_toggle_button_get_active(GTK_TOGGLE_BUTTON(p2))));
+        g_object_set_data(G_OBJECT(window), "plugin_typo", GINT_TO_POINTER(gtk_toggle_button_get_active(GTK_TOGGLE_BUTTON(p3))));
+        push_status(window, "Configuration plugins appliquée (session).");
+    }
+
+    gtk_widget_destroy(dialog);
+    (void)widget;
+}
+
+static void on_add_reference_dialog(GtkWidget *widget, gpointer data) {
+    GtkWidget *window = GTK_WIDGET(data);
+    GtkWidget *dialog = gtk_dialog_new_with_buttons("Ajouter référence",
+                                                    GTK_WINDOW(window),
+                                                    GTK_DIALOG_MODAL | GTK_DIALOG_DESTROY_WITH_PARENT,
+                                                    "_Annuler", GTK_RESPONSE_CANCEL,
+                                                    "_Ajouter", GTK_RESPONSE_ACCEPT,
+                                                    NULL);
+
+    GtkWidget *content = gtk_dialog_get_content_area(GTK_DIALOG(dialog));
+    GtkWidget *grid = gtk_grid_new();
+    gtk_grid_set_row_spacing(GTK_GRID(grid), 8);
+    gtk_grid_set_column_spacing(GTK_GRID(grid), 8);
+    gtk_container_set_border_width(GTK_CONTAINER(grid), 10);
+
+    GtkWidget *title_l = gtk_label_new("Titre :");
+    GtkWidget *author_l = gtk_label_new("Auteur :");
+    GtkWidget *year_l = gtk_label_new("Année :");
+    GtkWidget *type_l = gtk_label_new("Type :");
+
+    GtkWidget *title_e = gtk_entry_new();
+    GtkWidget *author_e = gtk_entry_new();
+    GtkWidget *year_e = gtk_entry_new();
+    GtkWidget *type_e = gtk_entry_new();
+
+    gtk_entry_set_text(GTK_ENTRY(type_e), "Article");
+
+    gtk_grid_attach(GTK_GRID(grid), title_l, 0, 0, 1, 1);
+    gtk_grid_attach(GTK_GRID(grid), title_e, 1, 0, 1, 1);
+    gtk_grid_attach(GTK_GRID(grid), author_l, 0, 1, 1, 1);
+    gtk_grid_attach(GTK_GRID(grid), author_e, 1, 1, 1, 1);
+    gtk_grid_attach(GTK_GRID(grid), year_l, 0, 2, 1, 1);
+    gtk_grid_attach(GTK_GRID(grid), year_e, 1, 2, 1, 1);
+    gtk_grid_attach(GTK_GRID(grid), type_l, 0, 3, 1, 1);
+    gtk_grid_attach(GTK_GRID(grid), type_e, 1, 3, 1, 1);
+
+    gtk_container_add(GTK_CONTAINER(content), grid);
+    gtk_widget_show_all(dialog);
+
+    if (gtk_dialog_run(GTK_DIALOG(dialog)) == GTK_RESPONSE_ACCEPT) {
+        const char *title = gtk_entry_get_text(GTK_ENTRY(title_e));
+        const char *author = gtk_entry_get_text(GTK_ENTRY(author_e));
+        const char *year = gtk_entry_get_text(GTK_ENTRY(year_e));
+        const char *type = gtk_entry_get_text(GTK_ENTRY(type_e));
+
+        if (title && *title && author && *author) {
+            gchar *ref = g_strdup_printf("[%s] %s (%s). %s.", type && *type ? type : "Réf", author, year && *year ? year : "n.d.", title);
+
+            GPtrArray *refs = get_references_store(window);
+            g_ptr_array_add(refs, g_strdup(ref));
+
+            GtkWidget *tv = get_current_textview(window);
+            if (tv && GTK_IS_TEXT_VIEW(tv)) {
+                GtkTextBuffer *buffer = gtk_text_view_get_buffer(GTK_TEXT_VIEW(tv));
+                GtkTextIter end;
+                gtk_text_buffer_get_end_iter(buffer, &end);
+                gtk_text_buffer_insert(buffer, &end, "\n", 1);
+                gtk_text_buffer_insert(buffer, &end, ref, -1);
+                gtk_text_buffer_insert(buffer, &end, "\n", 1);
+            }
+
+            push_status(window, "Référence ajoutée.");
+            g_free(ref);
+        } else {
+            push_status(window, "Référence invalide (titre/auteur requis).");
+        }
+    }
+
+    gtk_widget_destroy(dialog);
+    (void)widget;
+}
+
+static void on_manage_references_dialog(GtkWidget *widget, gpointer data) {
+    GtkWidget *window = GTK_WIDGET(data);
+    GPtrArray *refs = get_references_store(window);
+
+    GtkWidget *dialog = gtk_dialog_new_with_buttons("Gérer références",
+                                                    GTK_WINDOW(window),
+                                                    GTK_DIALOG_MODAL | GTK_DIALOG_DESTROY_WITH_PARENT,
+                                                    "_Fermer", GTK_RESPONSE_CLOSE,
+                                                    "_Copier sélection", GTK_RESPONSE_APPLY,
+                                                    "_Supprimer sélection", GTK_RESPONSE_ACCEPT,
+                                                    NULL);
+
+    GtkWidget *content = gtk_dialog_get_content_area(GTK_DIALOG(dialog));
+    GtkWidget *scrolled = gtk_scrolled_window_new(NULL, NULL);
+    gtk_widget_set_size_request(scrolled, 620, 320);
+    GtkWidget *list = gtk_list_box_new();
+    gtk_list_box_set_selection_mode(GTK_LIST_BOX(list), GTK_SELECTION_SINGLE);
+
+    for (guint i = 0; i < refs->len; i++) {
+        const char *r = g_ptr_array_index(refs, i);
+        GtkWidget *row = gtk_label_new(r ? r : "");
+        gtk_label_set_xalign(GTK_LABEL(row), 0.0);
+        gtk_list_box_insert(GTK_LIST_BOX(list), row, -1);
+    }
+
+    gtk_container_add(GTK_CONTAINER(scrolled), list);
+    gtk_container_add(GTK_CONTAINER(content), scrolled);
+    gtk_widget_show_all(dialog);
+
+    gboolean keep = TRUE;
+    while (keep) {
+        gint resp = gtk_dialog_run(GTK_DIALOG(dialog));
+        if (resp == GTK_RESPONSE_CLOSE || resp == GTK_RESPONSE_DELETE_EVENT) {
+            break;
+        }
+
+        GtkListBoxRow *sel = gtk_list_box_get_selected_row(GTK_LIST_BOX(list));
+        if (!sel) {
+            push_status(window, "Aucune référence sélectionnée.");
+            continue;
+        }
+
+        int idx = gtk_list_box_row_get_index(sel);
+        if (idx < 0 || (guint)idx >= refs->len) continue;
+
+        const char *value = g_ptr_array_index(refs, idx);
+
+        if (resp == GTK_RESPONSE_APPLY) {
+            GtkClipboard *cb = gtk_clipboard_get(GDK_SELECTION_CLIPBOARD);
+            gtk_clipboard_set_text(cb, value ? value : "", -1);
+            push_status(window, "Référence copiée dans le presse-papiers.");
+        } else if (resp == GTK_RESPONSE_ACCEPT) {
+            g_ptr_array_remove_index(refs, idx);
+            gtk_widget_destroy(GTK_WIDGET(sel));
+            push_status(window, "Référence supprimée.");
+        } else {
+            keep = FALSE;
+        }
+    }
+
+    gtk_widget_destroy(dialog);
+    (void)widget;
 }
 
 static void on_quit(GtkWidget *widget, gpointer data) {
@@ -1002,6 +1438,71 @@ static void on_check_spelling(GtkWidget *widget, gpointer data) {
     (void)widget;
 }
 
+typedef struct {
+    GtkWidget *window;
+    char *response;
+} SemanticDialogPayload;
+
+static gboolean show_semantic_response_dialog_idle(gpointer user_data) {
+    SemanticDialogPayload *payload = (SemanticDialogPayload*)user_data;
+    if (!payload || !payload->window) {
+        if (payload) {
+            g_free(payload->response);
+            g_free(payload);
+        }
+        return G_SOURCE_REMOVE;
+    }
+
+    const char *resp = payload->response ? payload->response : "Aucune réponse IA disponible.";
+
+    GtkWidget *dialog = gtk_dialog_new_with_buttons("Réponse de l'analyse sémantique",
+                                                    GTK_WINDOW(payload->window),
+                                                    GTK_DIALOG_MODAL | GTK_DIALOG_DESTROY_WITH_PARENT,
+                                                    "_Fermer", GTK_RESPONSE_CLOSE,
+                                                    NULL);
+    GtkWidget *content = gtk_dialog_get_content_area(GTK_DIALOG(dialog));
+
+    GtkWidget *scrolled = gtk_scrolled_window_new(NULL, NULL);
+    gtk_widget_set_size_request(scrolled, 700, 420);
+
+    GtkWidget *textview = gtk_text_view_new();
+    gtk_text_view_set_editable(GTK_TEXT_VIEW(textview), FALSE);
+    gtk_text_view_set_cursor_visible(GTK_TEXT_VIEW(textview), FALSE);
+    gtk_text_view_set_wrap_mode(GTK_TEXT_VIEW(textview), GTK_WRAP_WORD_CHAR);
+
+    GtkTextBuffer *buffer = gtk_text_view_get_buffer(GTK_TEXT_VIEW(textview));
+    gtk_text_buffer_set_text(buffer, resp, -1);
+
+    gtk_container_add(GTK_CONTAINER(scrolled), textview);
+    gtk_container_add(GTK_CONTAINER(content), scrolled);
+    gtk_widget_show_all(dialog);
+
+    gtk_dialog_run(GTK_DIALOG(dialog));
+    gtk_widget_destroy(dialog);
+
+    g_free(payload->response);
+    g_free(payload);
+    return G_SOURCE_REMOVE;
+}
+
+static void semantic_analysis_result_cb(const char *text, const char *instruction, RuleStatus status, void *user_data) {
+    (void)text;
+    (void)instruction;
+    (void)status;
+
+    GtkWidget *window = GTK_WIDGET(user_data);
+    if (!window) return;
+
+    const char *resp = nlp_get_last_llm_response();
+    if (!resp || !*resp) return;
+
+    SemanticDialogPayload *payload = g_new0(SemanticDialogPayload, 1);
+    payload->window = window;
+    payload->response = g_strdup(resp);
+
+    g_idle_add(show_semantic_response_dialog_idle, payload);
+}
+
 static void on_semantic_analysis(GtkWidget *widget, gpointer data) {
     GtkWidget *window = GTK_WIDGET(data);
     char *text = get_current_page_text(window);
@@ -1021,22 +1522,14 @@ static void on_semantic_analysis(GtkWidget *widget, gpointer data) {
     }
 
     nlp_process_check(text, section_name, instruction);
-    char *status_msg = g_strdup_printf("Analyse NLP lancée%s", section_name ? " sur section" : "");
+    char *status_msg = g_strdup_printf("Analyse NLP lancée%s (attente réponse IA)...", section_name ? " sur section" : "");
     gtk_statusbar_push(GTK_STATUSBAR(g_object_get_data(G_OBJECT(window), "statusbar")), 0, status_msg);
+
     g_free(status_msg);
     g_free(text);
     g_free(section_name);
     g_free(instruction);
     (void)widget;
-}
-    GtkWidget *tv = get_current_textview(window);
-    if (!tv) return;
-    GtkTextBuffer *buffer = gtk_text_view_get_buffer(GTK_TEXT_VIEW(tv));
-    GtkTextIter iter_start, iter_end;
-    gtk_text_buffer_get_iter_at_offset(buffer, &iter_start, start);
-    gtk_text_buffer_get_iter_at_offset(buffer, &iter_end, start + length);
-    gtk_text_buffer_select_range(buffer, &iter_start, &iter_end);
-    gtk_widget_grab_focus(tv);
 }
 
 static void search_replace_dialog_show(GtkWidget *widget, gpointer data) {
@@ -1213,27 +1706,49 @@ static void on_underlined(GtkWidget *widget, gpointer data) {
 
 /* ---------- Zoom helpers (apply to all pages) ---------- */
 static void apply_font_size_to_all_pages(GtkWidget *window, int size) {
+    if (!window) return;
+
+    if (size < 6) size = 6;
+    if (size > 96) size = 96;
+
     GtkWidget *pages_box = GTK_WIDGET(g_object_get_data(G_OBJECT(window), "pages_box"));
     if (!pages_box) return;
+
     GList *children = gtk_container_get_children(GTK_CONTAINER(pages_box));
     for (GList *l = children; l; l = l->next) {
         GtkWidget *frame = GTK_WIDGET(l->data);
+        if (!frame) continue;
+
+        /* IMPORTANT:
+         * On ne doit PAS essayer gtk_bin_get_child(GTK_BIN(frame)) ici :
+         * GtkFrame n'est pas un GtkBin fiable.
+         * On s'appuie uniquement sur la donnée stockée "page_textview".
+         */
         GtkWidget *tv = GTK_WIDGET(g_object_get_data(G_OBJECT(frame), "page_textview"));
-        if (!tv) tv = gtk_bin_get_child(GTK_BIN(frame));
-        if (!tv) continue;
+        if (!tv || !GTK_IS_TEXT_VIEW(tv)) continue;
+
         GtkTextBuffer *buffer = gtk_text_view_get_buffer(GTK_TEXT_VIEW(tv));
-        GtkTextIter start, end;
-        gtk_text_buffer_get_start_iter(buffer, &start);
-        gtk_text_buffer_get_end_iter(buffer, &end);
+        if (!buffer) continue;
+
         GtkTextTagTable *table = gtk_text_buffer_get_tag_table(buffer);
+        if (!table) continue;
+
         GtkTextTag *size_tag = gtk_text_tag_table_lookup(table, "font_size");
         if (!size_tag) {
             size_tag = gtk_text_tag_new("font_size");
+            if (!size_tag) continue;
             g_object_set(size_tag, "size-points", size, NULL);
             gtk_text_tag_table_add(table, size_tag);
         } else {
             g_object_set(size_tag, "size-points", size, NULL);
         }
+
+        GtkTextIter start, end;
+        gtk_text_buffer_get_start_iter(buffer, &start);
+        gtk_text_buffer_get_end_iter(buffer, &end);
+
+        /* Nettoyer puis ré-appliquer pour éviter des accumulations */
+        gtk_text_buffer_remove_tag(buffer, size_tag, &start, &end);
         gtk_text_buffer_apply_tag(buffer, size_tag, &start, &end);
     }
     g_list_free(children);
@@ -1245,6 +1760,7 @@ static void on_zoom_in(GtkWidget *widget, gpointer data) {
     if (size < 48) size += 2;
     set_font_size(window, size);
     apply_font_size_to_all_pages(window, size);
+    if (window) gtk_widget_queue_draw(window);
     (void)widget;
 }
 
@@ -1254,6 +1770,7 @@ static void on_zoom_out(GtkWidget *widget, gpointer data) {
     if (size > 6) size -= 2;
     set_font_size(window, size);
     apply_font_size_to_all_pages(window, size);
+    if (window) gtk_widget_queue_draw(window);
     (void)widget;
 }
 
@@ -1262,16 +1779,152 @@ static void on_zoom_reset(GtkWidget *widget, gpointer data) {
     int size = 12;
     set_font_size(window, size);
     apply_font_size_to_all_pages(window, size);
+    if (window) gtk_widget_queue_draw(window);
     (void)widget;
 }
 
-/* ---------- Insert page break: create a new page below current page ---------- */
+/* ---------- Insert page break: behave like a real editor ---------- */
 static void on_insert_page_break(GtkWidget *widget, gpointer data) {
     GtkWidget *window = GTK_WIDGET(data);
+    if (!window) return;
+
     GtkWidget *pages_box = GTK_WIDGET(g_object_get_data(G_OBJECT(window), "pages_box"));
+    if (!pages_box) return;
+
     GtkWidget *current_tv = get_current_textview(window);
-    insert_page_after(window, pages_box, current_tv);
-    g_print("Action menu: Saut de page (inséré sous la page courante)\n");
+    if (!current_tv) return;
+
+    if (!GTK_IS_TEXT_VIEW(current_tv)) return;
+
+    GtkTextBuffer *buffer = gtk_text_view_get_buffer(GTK_TEXT_VIEW(current_tv));
+    if (!buffer) return;
+
+    /* Insert a newline at the cursor/selection end, so it's like an editor "page break":
+     * - keep current content ending cleanly
+     * - new page starts after the break
+     */
+    GtkTextIter insert_iter;
+    if (gtk_text_buffer_get_has_selection(buffer)) {
+        GtkTextIter start, end;
+        gtk_text_buffer_get_selection_bounds(buffer, &start, &end);
+        insert_iter = end;
+    } else {
+        GtkTextMark *ins = gtk_text_buffer_get_insert(buffer);
+        gtk_text_buffer_get_iter_at_mark(buffer, &insert_iter, ins);
+    }
+
+    /* Ensure we move to the end of selection (or cursor) then insert '\n' */
+    gtk_text_buffer_insert(buffer, &insert_iter, "\n", 1);
+
+    /* Create the next page below and move the cursor to it */
+    GtkWidget *new_page = insert_page_after(window, pages_box, current_tv);
+    if (!new_page) return;
+
+    GtkWidget *next_tv = GTK_WIDGET(g_object_get_data(G_OBJECT(new_page), "page_textview"));
+    if (!next_tv || !GTK_IS_TEXT_VIEW(next_tv)) return;
+
+    GtkTextBuffer *nbuf = gtk_text_view_get_buffer(GTK_TEXT_VIEW(next_tv));
+    if (!nbuf) return;
+
+    GtkTextIter start;
+    gtk_text_buffer_get_start_iter(nbuf, &start);
+    gtk_text_buffer_place_cursor(nbuf, &start);
+    gtk_widget_grab_focus(next_tv);
+
+    g_object_set_data(G_OBJECT(window), "current_page", next_tv);
+
+    g_print("Action menu: Saut de page (nouvelle page sous la page courante)\n");
+    (void)widget;
+}
+
+/* ---------- Image insertion ---------- */
+static void on_insert_image(GtkWidget *widget, gpointer data) {
+    GtkWidget *window = GTK_WIDGET(data);
+    GtkWidget *tv = get_current_textview(window);
+    if (!tv || !GTK_IS_TEXT_VIEW(tv)) {
+        push_status(window, "Aucune page active pour insérer une image.");
+        return;
+    }
+
+    GtkWidget *dialog = gtk_file_chooser_dialog_new("Insérer une image",
+                                                     GTK_WINDOW(window),
+                                                     GTK_FILE_CHOOSER_ACTION_OPEN,
+                                                     "_Annuler", GTK_RESPONSE_CANCEL,
+                                                     "_Insérer", GTK_RESPONSE_ACCEPT,
+                                                     NULL);
+
+    GtkFileFilter *filter_img = gtk_file_filter_new();
+    gtk_file_filter_set_name(filter_img, "Images");
+    gtk_file_filter_add_mime_type(filter_img, "image/png");
+    gtk_file_filter_add_mime_type(filter_img, "image/jpeg");
+    gtk_file_filter_add_mime_type(filter_img, "image/webp");
+    gtk_file_filter_add_mime_type(filter_img, "image/bmp");
+    gtk_file_filter_add_mime_type(filter_img, "image/gif");
+    gtk_file_filter_add_pattern(filter_img, "*.png");
+    gtk_file_filter_add_pattern(filter_img, "*.jpg");
+    gtk_file_filter_add_pattern(filter_img, "*.jpeg");
+    gtk_file_filter_add_pattern(filter_img, "*.webp");
+    gtk_file_filter_add_pattern(filter_img, "*.bmp");
+    gtk_file_filter_add_pattern(filter_img, "*.gif");
+    gtk_file_chooser_add_filter(GTK_FILE_CHOOSER(dialog), filter_img);
+
+    if (gtk_dialog_run(GTK_DIALOG(dialog)) == GTK_RESPONSE_ACCEPT) {
+        char *filename = gtk_file_chooser_get_filename(GTK_FILE_CHOOSER(dialog));
+        if (filename) {
+            GError *err = NULL;
+            GdkPixbuf *pixbuf = gdk_pixbuf_new_from_file(filename, &err);
+            if (!pixbuf) {
+                push_status(window, "Impossible de charger l'image.");
+                if (err) {
+                    g_printerr("Erreur image: %s\n", err->message);
+                    g_clear_error(&err);
+                }
+                g_free(filename);
+                gtk_widget_destroy(dialog);
+                (void)widget;
+                return;
+            }
+
+            int w = gdk_pixbuf_get_width(pixbuf);
+            int h = gdk_pixbuf_get_height(pixbuf);
+            const int max_w = 480;
+
+            GdkPixbuf *final_pixbuf = pixbuf;
+            if (w > max_w && h > 0) {
+                int new_h = (int)((double)h * ((double)max_w / (double)w));
+                GdkPixbuf *scaled = gdk_pixbuf_scale_simple(pixbuf, max_w, new_h, GDK_INTERP_BILINEAR);
+                if (scaled) {
+                    final_pixbuf = scaled;
+                    g_object_unref(pixbuf);
+                }
+            }
+
+            GtkWidget *image = gtk_image_new_from_pixbuf(final_pixbuf);
+            if (final_pixbuf) g_object_unref(final_pixbuf);
+
+            GtkTextBuffer *buffer = gtk_text_view_get_buffer(GTK_TEXT_VIEW(tv));
+            GtkTextIter iter;
+            if (gtk_text_buffer_get_has_selection(buffer)) {
+                GtkTextIter start, end;
+                gtk_text_buffer_get_selection_bounds(buffer, &start, &end);
+                iter = end;
+            } else {
+                GtkTextMark *ins = gtk_text_buffer_get_insert(buffer);
+                gtk_text_buffer_get_iter_at_mark(buffer, &iter, ins);
+            }
+
+            gtk_text_buffer_insert(buffer, &iter, "\n", 1);
+            GtkTextChildAnchor *anchor = gtk_text_buffer_create_child_anchor(buffer, &iter);
+            gtk_text_view_add_child_at_anchor(GTK_TEXT_VIEW(tv), image, anchor);
+            gtk_widget_show(image);
+            gtk_text_buffer_insert(buffer, &iter, "\n", 1);
+
+            push_status(window, "Image insérée.");
+            g_free(filename);
+        }
+    }
+
+    gtk_widget_destroy(dialog);
     (void)widget;
 }
 
@@ -1575,8 +2228,13 @@ static void run_rules_and_update_panel(GtkWidget *window) {
         return;
     }
 
-    /* 2) charger les règles */
-    const char *json_paths[] = { "data/rules.json", "test_rules.json" };
+    /* 2) charger les règles (robuste vis-à-vis du cwd: run depuis build/ ou projet) */
+    const char *json_paths[] = {
+        "data/rules.json",
+        "../data/rules.json",
+        "test_rules.json",
+        "../test_rules.json"
+    };
     RuleReport *report = NULL;
 
     for (size_t i = 0; i < (sizeof(json_paths) / sizeof(json_paths[0])); i++) {
@@ -1586,16 +2244,37 @@ static void run_rules_and_update_panel(GtkWidget *window) {
 
     if (!report) {
         rules_panel_update_from_report(rules_panel, NULL);
-        free(text);
+        g_free(text);
         return;
     }
 
     /* 3) exécuter + afficher */
     run_full_diagnostic(report, text);
+
+    /* Debug: afficher le contenu des issues pour corriger l’heuristique UI
+     * (type/message/line) afin d’alimenter correctement "Mots incorrects". */
+    if (report && report->issues && report->issue_count > 0) {
+        g_print("=== Compliance report debug ===\n");
+        g_print("issue_count=%d\n", report->issue_count);
+        int max_dbg = report->issue_count < 25 ? report->issue_count : 25;
+        for (int i = 0; i < max_dbg; i++) {
+            const RuleIssue *iss = &report->issues[i];
+            g_print("Issue[%d]: line=%d type='%s' message='%s'\n",
+                    i,
+                    iss ? iss->line : -1,
+                    iss ? iss->type : "",
+                    iss ? iss->message : "");
+        }
+        if (report->issue_count > max_dbg) {
+            g_print("(debug truncated, total issues=%d)\n", report->issue_count);
+        }
+        g_print("=== End debug ===\n");
+    }
+
     rules_panel_update_from_report(rules_panel, report);
 
     free_rule_report(report);
-    free(text);
+    g_free(text);
 }
 
 static void on_toggle_rules_panel(GtkWidget *widget, gpointer data) {
@@ -1702,7 +2381,7 @@ GtkWidget* create_main_window(void) {
     set_page_format(window, "A4");
     set_orientation(window, "Portrait");
     set_margins(window, 40, 40, 30, 30); /* default margins in points */
-    set_margins_visible(window, TRUE);
+    set_margins_visible(window, FALSE);
     reset_document_formatter(window);
 
     vbox = gtk_box_new(GTK_ORIENTATION_VERTICAL, 0);
@@ -1819,6 +2498,7 @@ GtkWidget* create_main_window(void) {
 
     GtkWidget *settingsMi = gtk_menu_item_new_with_label("Paramètres");
     GtkWidget *spellCheckMi = gtk_menu_item_new_with_label("Vérification orthographique");
+    GtkWidget *semanticAnalysisMi = gtk_menu_item_new_with_label("Analyse sémantique");
     GtkWidget *pluginsMi = gtk_menu_item_new_with_label("Gestion des plugins");
     gtk_menu_shell_append(GTK_MENU_SHELL(toolsMenu), settingsMi);
     gtk_menu_shell_append(GTK_MENU_SHELL(toolsMenu), spellCheckMi);
@@ -1891,7 +2571,7 @@ GtkWidget* create_main_window(void) {
     g_signal_connect(quitMi, "activate", G_CALLBACK(on_quit), NULL);
 
     g_signal_connect(insertPageBreakMi, "activate", G_CALLBACK(on_insert_page_break), window);
-    g_signal_connect(insertImageMi, "activate", G_CALLBACK(on_menu_action_stub), NULL);
+    g_signal_connect(insertImageMi, "activate", G_CALLBACK(on_insert_image), window);
     g_signal_connect(insertTableMi, "activate", G_CALLBACK(on_insert_table), window);
 
     g_signal_connect(pageSetupMi, "activate", G_CALLBACK(on_page_setup_apply), window);
@@ -1901,19 +2581,19 @@ GtkWidget* create_main_window(void) {
     g_signal_connect(zoomOutMi, "activate", G_CALLBACK(on_zoom_out), window);
     g_signal_connect(zoomResetMi, "activate", G_CALLBACK(on_zoom_reset), window);
 
-    g_signal_connect(addRefMi, "activate", G_CALLBACK(on_menu_action_stub), NULL);
-    g_signal_connect(manageRefMi, "activate", G_CALLBACK(on_menu_action_stub), NULL);
-    g_signal_connect(settingsMi, "activate", G_CALLBACK(on_menu_action_stub), NULL);
+    g_signal_connect(addRefMi, "activate", G_CALLBACK(on_add_reference_dialog), window);
+    g_signal_connect(manageRefMi, "activate", G_CALLBACK(on_manage_references_dialog), window);
+    g_signal_connect(settingsMi, "activate", G_CALLBACK(on_settings_dialog), window);
     g_signal_connect(spellCheckMi, "activate", G_CALLBACK(on_check_spelling), window);
     g_signal_connect(semanticAnalysisMi, "activate", G_CALLBACK(on_semantic_analysis), window);
-    g_signal_connect(pluginsMi, "activate", G_CALLBACK(on_menu_action_stub), NULL);
+    g_signal_connect(pluginsMi, "activate", G_CALLBACK(on_plugins_dialog), window);
 
     GtkWidget *toggleRulesMi = gtk_menu_item_new_with_label("Afficher panneau de conformité");
     gtk_menu_shell_append(GTK_MENU_SHELL(toolsMenu), gtk_separator_menu_item_new());
     gtk_menu_shell_append(GTK_MENU_SHELL(toolsMenu), toggleRulesMi);
     g_signal_connect(toggleRulesMi, "activate", G_CALLBACK(on_toggle_rules_panel), window);
 
-    g_signal_connect(toggleThemeMi, "activate", G_CALLBACK(on_toggle_theme), NULL);
+    g_signal_connect(toggleThemeMi, "activate", G_CALLBACK(on_toggle_theme), window);
 
     g_signal_connect(helpContentsMi, "activate", G_CALLBACK(on_show_help_contents), window);
     g_signal_connect(aboutMi, "activate", G_CALLBACK(on_show_about), window);
@@ -1931,6 +2611,7 @@ GtkWidget* create_main_window(void) {
     gtk_widget_add_accelerator(quitMi, "activate", accel, GDK_KEY_q, GDK_CONTROL_MASK, GTK_ACCEL_VISIBLE);
 
     nlp_system_init();
+    set_llm_result_callback(semantic_analysis_result_cb, window);
     apply_margins_to_all_pages(window);
 
     return window;

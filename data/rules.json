@@ -15,6 +15,14 @@
       "description": "Éviter la première personne",
       "check_type": "regex_forbidden",
       "parameter": "\\b(je|moi|mon|ma|mes)\\b"
+    },
+    {
+      "id": "R003",
+      "category": "orthographe",
+      "severity": "warning",
+      "description": "Détecter les mots incorrects (Hunspell)",
+      "check_type": "spelling_hunspell",
+      "parameter": "fr_FR"
     }
   ]
 }

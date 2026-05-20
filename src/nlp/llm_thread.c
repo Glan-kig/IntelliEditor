@@ -20,6 +20,17 @@ static int stop_thread = 0;
 static pthread_t thread_id;
 static int thread_started = 0;
 
+/* Callback résultat vers UI/moteur */
+static LLMResultCallback g_result_cb = NULL;
+static void *g_result_user_data = NULL;
+
+void set_llm_result_callback(LLMResultCallback cb, void *user_data) {
+    pthread_mutex_lock(&lock);
+    g_result_cb = cb;
+    g_result_user_data = user_data;
+    pthread_mutex_unlock(&lock);
+}
+
 // Ligne par ligne : Ajoute une demande d'analyse dans la file
 void push_llm_task(const char *t, const char *i) {
     if (!t || !i) return;
@@ -72,7 +83,16 @@ void* llm_worker_func(void* arg) {
         // On appelle ta fonction de llm_client.c
         RuleStatus result = ask_llm_semantic_check(task->text, task->instruction);
         
-        // Ici, on devrait envoyer le résultat à l'UI (DEV-B) ou au moteur de règles (DEV-D)
+        // Notifier l'UI/moteur si callback enregistré
+        pthread_mutex_lock(&lock);
+        LLMResultCallback cb = g_result_cb;
+        void *cb_user_data = g_result_user_data;
+        pthread_mutex_unlock(&lock);
+
+        if (cb) {
+            cb(task->text, task->instruction, result, cb_user_data);
+        }
+
         printf("Analyse terminée pour : %s -> Statut : %d\n", task->text, result);
         
         //  Libération de la mémoire de la tâche

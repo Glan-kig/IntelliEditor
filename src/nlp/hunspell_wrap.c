@@ -8,12 +8,28 @@
 
 static Hunhandle* handle = NULL;
 
-// Initialise le dictionnaire français[cite: 137].
+/* Initialise le dictionnaire français.
+ * Les chemins doivent être robustes quand le binaire est lancé depuis build/ :
+ * - sinon on cherche build/data/fr_FR.aff/dic au lieu de project/data/...
+ */
 void init_spell_checker() {
-    // Les fichiers .aff et .dic doivent être dans data/
-    handle = Hunspell_create("data/fr_FR.aff", "data/fr_FR.dic");
-     if (!handle) {
-        fprintf(stderr, "[ERROR] init_spell_checker: impossible de charger Hunspell (data/fr_FR.aff ou data/fr_FR.dic manquant)\n");
+    const char *aff_paths[] = {
+        "data/fr_FR.aff",
+        "../data/fr_FR.aff"
+    };
+    const char *dic_paths[] = {
+        "data/fr_FR.dic",
+        "../data/fr_FR.dic"
+    };
+
+    handle = NULL;
+    for (size_t i = 0; i < (sizeof(aff_paths) / sizeof(aff_paths[0])); i++) {
+        handle = Hunspell_create(aff_paths[i], dic_paths[i]);
+        if (handle) break;
+    }
+
+    if (!handle) {
+        fprintf(stderr, "[ERROR] init_spell_checker: impossible de charger Hunspell (data/fr_FR.aff/dic ou ../data/fr_FR.aff/dic manquants)\n");
     }
 }
 
