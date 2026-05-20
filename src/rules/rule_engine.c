@@ -5,6 +5,8 @@
 #include <ctype.h>
 #include "../../include/rules.h"
 #include "../../include/utils.h"
+#include "../../include/nlp.h"
+#include "../../include/tokenizer.h"
 
 /* 
  * MACROS POUR LA MAINTENABILITÉ ET LE DÉBOGAGE
@@ -284,6 +286,37 @@ void update_report_score(RuleReport* report) {
  * @note Utilise les paramètres des règles pour une logique dynamique
  * @warning Met à jour automatiquement le score du rapport à la fin
  */
+static void reset_report_issues(RuleReport* report) {
+    if (!report) return;
+    if (report->issues) {
+        free(report->issues);
+        report->issues = NULL;
+    }
+    report->issue_count = 0;
+}
+
+static int append_issue(RuleReport* report, int line, const char* type, const char* message, int offset) {
+    if (!report || !type || !message) return 0;
+
+    int new_count = report->issue_count + 1;
+    RuleIssue* grown = realloc(report->issues, (size_t)new_count * sizeof(RuleIssue));
+    if (!grown) return 0;
+
+    report->issues = grown;
+    RuleIssue* dst = &report->issues[report->issue_count];
+    dst->line = line;
+    dst->offset = offset;
+
+    strncpy(dst->type, type, sizeof(dst->type) - 1);
+    dst->type[sizeof(dst->type) - 1] = '\0';
+
+    strncpy(dst->message, message, sizeof(dst->message) - 1);
+    dst->message[sizeof(dst->message) - 1] = '\0';
+
+    report->issue_count = new_count;
+    return 1;
+}
+
 void run_full_diagnostic(RuleReport* report, const char* text) {
     // === Section: Validation des paramètres critiques ===
     if (report == NULL) {
@@ -300,6 +333,8 @@ void run_full_diagnostic(RuleReport* report, const char* text) {
         update_report_score(report);
         return;
     }
+
+    reset_report_issues(report);
 
     size_t text_len = strlen(text);
     LOG_INFO("Démarrage du diagnostic complet sur %zu caractères\n", text_len);
@@ -355,6 +390,33 @@ void run_full_diagnostic(RuleReport* report, const char* text) {
                     (char*)current_rule->parameter
                 );
             }
+        } else if (strcmp(current_rule->check_type, "spelling_hunspell") == 0) {
+            int token_count = 0;
+            WordToken* tokens = tokenize_words(analysis_text, &token_count);
+            int local_issues = 0;
+
+            if (!tokens) {
+                LOG_WARN("Règle %s: tokenize_words a échoué", current_rule->id);
+                current_rule->status = STATUS_AVERTISSEMENT;
+            } else {
+                for (int t = 0; t < token_count; t++) {
+                    const char* word = tokens[t].text;
+                    if (!word || word[0] == '\0') continue;
+
+                    if (!is_word_correct(word)) {
+                        char msg[256];
+                        snprintf(msg, sizeof(msg), "%s : Incorrect", word);
+                        if (append_issue(report, tokens[t].line, "spelling", msg, tokens[t].offset)) {
+                            local_issues++;
+                        }
+                    }
+                }
+
+                free_word_tokens(tokens, token_count);
+
+                current_rule->status = (local_issues == 0) ? STATUS_CONFORME : STATUS_NON_CONFORME;
+                LOG_INFO("Règle %s: %d mot(s) incorrect(s) détecté(s)", current_rule->id, local_issues);
+            }
         } else if (strcmp(current_rule->check_type, "llm_semantic") == 0) {
             LOG_INFO("Règle %s: analyse LLM non implémentée (placeholder)\n",
                     current_rule->id);
@@ -392,6 +454,12 @@ void free_rule_report(RuleReport* report) {
         }
         free(report->rules);
     }
+    if (report->issues != NULL) {
+        free(report->issues);
+        report->issues = NULL;
+        report->issue_count = 0;
+    }
+
     free(report);
 }
 

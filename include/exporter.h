@@ -14,6 +14,7 @@
 typedef enum {
     EXPORT_TXT,   /**< Texte brut UTF-8 */
     EXPORT_RTF,   /**< Rich Text Format */
+    EXPORT_PDF,   /**< Portable Document Format */
     EXPORT_IE     /**< Format natif IntelliEditor (binaire) */
 } ExportFormat;
 
@@ -27,5 +28,8 @@ typedef enum {
  */
 bool exporter_save(const GapBuffer *gb, const Formatter *fmt,
                    const char *filepath, ExportFormat format);
+
+/* Détecte le format cible à partir de l'extension de fichier */
+ExportFormat exporter_detect_format(const char *filepath);
 
 #endif /* EXPORTER_H */

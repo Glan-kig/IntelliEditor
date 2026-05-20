@@ -1,6 +1,7 @@
 /* Dark theme for IntelliEditor - style_dark.css */
 
 window, .window {
+    /* garder fond "blanc/clair" même en mode theme sombre */
     background-color: #f5f6f8;
     color: #222222;
     font-family: "Segoe UI", "Helvetica Neue", Arial, sans-serif;

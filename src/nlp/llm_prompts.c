@@ -1,5 +1,7 @@
 #include <stdio.h>
 #include <stdlib.h>
+#include <string.h>
+#include "../../include/nlp.h"
 
 void prepare_prompt(char* buffer, size_t size, const char* consigne, const char* texte) {
     const char* template = 

@@ -188,6 +188,8 @@ RuleReport* load_rules(const char* filename) {
     rule_report->rules = NULL;
     rule_report->rule_count = 0;
     rule_report->rules_ok = 0;
+    rule_report->issues = NULL;
+    rule_report->issue_count = 0;
 
     // === Section: Extraction et validation du tableau "rules" ===
     cJSON* rules_array = cJSON_GetObjectItem(json_root, "rules");
